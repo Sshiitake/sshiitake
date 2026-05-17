@@ -1,0 +1,15 @@
+[tunnels.api-prod]
+host = "bastion-prod"
+type = "local"
+local_port = 8443
+remote_host = "api.internal"
+remote_port = 443
+group = "work-stack"
+
+[tunnels.socks-eu]
+host = "eu-jump"
+type = "dynamic"
+local_port = 1080
+
+[groups.work-stack]
+description = "Production work stack"
