@@ -122,11 +122,15 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 		t.setStatus(StatusDown)
 		return fmt.Errorf("dial %s: %w", t.rt.Name, err)
 	}
-	defer func() { _ = client.Close() }()
+	// Note: client.Close() is handled by forwardLocal's ctx-cancel
+	// goroutine (or by the explicit close below if listener setup
+	// fails). We still call it defensively after forwardLocal returns;
+	// *ssh.Client.Close is idempotent.
 
 	listenAddr := net.JoinHostPort(t.rt.LocalHost, strconv.Itoa(t.rt.LocalPort))
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
+		_ = client.Close()
 		t.setStatus(StatusDown)
 		return fmt.Errorf("listen %s: %w", listenAddr, err)
 	}
@@ -137,6 +141,9 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 	}
 
 	err = forwardLocal(ctx, client, ln, t.rt.RemoteAddr)
+	// forwardLocal's ctx-cancel goroutine closed the client on cancel.
+	// Defensive close is still safe (Close is idempotent on *ssh.Client).
+	_ = client.Close()
 
 	t.setStatus(StatusStopping)
 	_ = ln.Close()
@@ -154,6 +161,10 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 func (t *Tunnel) dial(ctx context.Context) (*ssh.Client, error) {
 	if t.opts.HostKeyCallback == nil {
 		return nil, fmt.Errorf("HostKeyCallback required")
+	}
+	if t.rt.ProxyJump != "" {
+		return nil, fmt.Errorf("tunnel %q: ProxyJump=%q is not yet supported (Phase 2)",
+			t.rt.Name, t.rt.ProxyJump)
 	}
 	auth, err := t.buildAuth()
 	if err != nil {

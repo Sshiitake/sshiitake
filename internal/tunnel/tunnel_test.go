@@ -126,3 +126,31 @@ func TestTunnel_lifecycle(t *testing.T) {
 	}
 	assert.Equal(t, StatusDown, tun.Status())
 }
+
+// TestTunnel_dial_proxyJumpRefused verifies the HIGH fix from the
+// Phase 1 red-team review: dial() must refuse a tunnel with a non-empty
+// ProxyJump rather than silently bypass the bastion.
+func TestTunnel_dial_proxyJumpRefused(t *testing.T) {
+	addr, hostKey := newTestSSHServer(t)
+	host, port := splitHostPort(t, addr)
+
+	rt := config.ResolvedTunnel{
+		Name:      "viajump",
+		SSHHost:   host,
+		SSHPort:   port,
+		SSHUser:   "tester",
+		ProxyJump: "bastion-prod", // <-- this is what should trip the guard
+		Type:      config.TypeLocal,
+		LocalHost: "127.0.0.1",
+		LocalPort: 0,
+	}
+	opts := Options{
+		HostKeyCallback: ssh.FixedHostKey(hostKey),
+		DialTimeout:     2 * time.Second,
+	}
+	tun := New(rt, opts)
+	_, err := tun.dial(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ProxyJump")
+	require.Contains(t, err.Error(), "Phase 2")
+}

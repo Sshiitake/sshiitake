@@ -30,6 +30,10 @@ func forwardLocal(ctx context.Context, sshClient *ssh.Client, ln net.Listener, r
 			_ = c.Close()
 		}
 		mu.Unlock()
+		// Close the SSH client so any pipeOneConn blocked in
+		// sshClient.Dial unblocks immediately. Start's defer
+		// client.Close() is then a no-op.
+		_ = sshClient.Close()
 	}()
 
 	var wg sync.WaitGroup

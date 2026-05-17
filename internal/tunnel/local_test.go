@@ -75,3 +75,48 @@ func TestForwardLocal_passesBytes(t *testing.T) {
 		t.Fatal("forwardLocal did not return after cancel")
 	}
 }
+
+// TestForwardLocal_closesClientOnCancel verifies the BLOCKER fix from
+// the Phase 1 red-team review: when ctx is cancelled, forwardLocal must
+// close the SSH client so any pipeOneConn blocked inside
+// sshClient.Dial unblocks. We assert closure by checking that a fresh
+// Dial on the client errors after forwardLocal returns.
+func TestForwardLocal_closesClientOnCancel(t *testing.T) {
+	sshAddr, hostKey := newTestSSHServer(t)
+
+	clientCfg := &ssh.ClientConfig{
+		User:            "tester",
+		HostKeyCallback: ssh.FixedHostKey(hostKey),
+		Timeout:         2 * time.Second,
+	}
+	sshClient, err := ssh.Dial("tcp", sshAddr, clientCfg)
+	require.NoError(t, err)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- forwardLocal(ctx, sshClient, listener, "127.0.0.1:1") }()
+
+	// Wait briefly so the ctx-goroutine arms.
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("forwardLocal did not return after cancel")
+	}
+
+	// After forwardLocal returns, sshClient should already be closed.
+	// Calling Close again should be safe (idempotent).
+	_ = sshClient.Close()
+
+	// New dials should fail because client is closed.
+	_, dialErr := sshClient.Dial("tcp", "127.0.0.1:1")
+	require.Error(t, dialErr, "client should be closed; further Dial must fail")
+}
