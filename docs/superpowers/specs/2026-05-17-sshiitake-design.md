@@ -1,4 +1,4 @@
-# Shitaki: TUI SSH Tunnel Manager
+# Sshiitake: TUI SSH Tunnel Manager
 
 **Status:** Draft
 **Date:** 2026-05-17
@@ -17,7 +17,7 @@ Existing tools sit at two extremes:
 - **Too low-level:** `ssh -L ...`, `autossh`, hand-rolled bash. Works for one tunnel; doesn't scale to "bring up my whole work stack."
 - **Too much:** TunnelForge bundles VPN-replacement, TLS obfuscation, DNS leak protection, Telegram bots, server hardening. Different threat model, different audience.
 
-Nothing in between, especially nothing cross-platform with a real TUI, since STM went unmaintained. Shitaki fills that gap.
+Nothing in between, especially nothing cross-platform with a real TUI, since STM went unmaintained. Sshiitake fills that gap.
 
 ## Goals
 
@@ -32,12 +32,12 @@ Nothing in between, especially nothing cross-platform with a real TUI, since STM
 
 ## Non-goals (explicitly out of scope)
 
-- **VPN-style features**: kill switch, DNS leak protection, iptables manipulation. Shitaki is a dev tool, not a privacy tool. These features have a different threat model and cause sharp edges on dev machines (locking yourself out at 2am).
+- **VPN-style features**: kill switch, DNS leak protection, iptables manipulation. Sshiitake is a dev tool, not a privacy tool. These features have a different threat model and cause sharp edges on dev machines (locking yourself out at 2am).
 - **Censorship-evasion**: TLS obfuscation, PSK, stunnel integration. Different product.
 - **Remote control bots**: Telegram, Discord, Slack. Out of scope.
 - **Server-side configuration**: sshd hardening, fail2ban, sysctl. Out of scope.
 - **Daemon mode** (v1): tunnels live for the life of the process. Run inside tmux for persistence. May revisit in v2 if user demand is real.
-- **Writing back to `~/.ssh/config`**: shitaki only reads ssh config. Tunnel orchestration metadata lives in shitaki's own config.
+- **Writing back to `~/.ssh/config`**: sshiitake only reads ssh config. Tunnel orchestration metadata lives in sshiitake's own config.
 - **Built-in tutorial**: link to good external docs.
 
 ## Stack decisions
@@ -49,15 +49,15 @@ Nothing in between, especially nothing cross-platform with a real TUI, since STM
 | SSH library | `golang.org/x/crypto/ssh` (primary), spawn `ssh` (fallback) | Native library = full control over reconnect, in-process port forwarding, connection events. Fallback to subprocess for users with exotic SSH config (custom ProxyCommand, certificate edge cases) |
 | Config format | TOML | Comments supported, less footgun than YAML, more readable than JSON |
 | Process model | Single process, foreground | KISS. Tmux solves persistence. |
-| Persistence | None for tunnels themselves; config in `~/.config/shitaki/tunnels.toml` | Tunnels are intentionally session-scoped |
-| Binary name | `sht` | 3 chars, like `gh` / `fd` / `jq`. Full `shitaki` is the package, brand, and docs name |
+| Persistence | None for tunnels themselves; config in `~/.config/sshiitake/tunnels.toml` | Tunnels are intentionally session-scoped |
+| Binary name | `ssht` | 4 chars; reads as "ssh + t". Full `sshiitake` is the package, brand, and docs name. First three keystrokes match `ssh` so muscle memory transfers |
 | License | GPLv3 or MIT (TBD — see open questions) | |
 
 ## Architecture
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│                       sht (single process)                │
+│                       ssht (single process)                │
 │                                                           │
 │  ┌─────────────┐    ┌──────────────────┐   ┌──────────┐   │
 │  │   CLI       │    │   Bubble Tea     │   │  Config  │   │
@@ -102,7 +102,7 @@ Each unit has a clear boundary: `manager` doesn't know about Bubble Tea; `tui` d
 
 ## Config model
 
-`~/.config/shitaki/tunnels.toml`:
+`~/.config/sshiitake/tunnels.toml`:
 
 ```toml
 # A single tunnel
@@ -137,33 +137,33 @@ description = "Production work stack: api, db, redis"
 description = "Home services"
 ```
 
-`~/.ssh/config` is consulted (read-only) for `Host`, `HostName`, `User`, `Port`, `IdentityFile`, `ProxyJump`. If a tunnel's `host` isn't in ssh config and isn't a resolvable DNS name with sensible defaults, shitaki reports a config error at startup.
+`~/.ssh/config` is consulted (read-only) for `Host`, `HostName`, `User`, `Port`, `IdentityFile`, `ProxyJump`. If a tunnel's `host` isn't in ssh config and isn't a resolvable DNS name with sensible defaults, sshiitake reports a config error at startup.
 
 No secrets in `tunnels.toml`. Keys come from ssh-agent or the path declared in ssh config.
 
 ## CLI surface
 
-Each `sht` invocation is an independent foreground process that owns its own tunnels. There is no daemon, no IPC, no shared state between invocations. Run `sht` inside tmux for persistence. Close the process, tunnels close with it. This is the absolute simplest model and the one we commit to.
+Each `ssht` invocation is an independent foreground process that owns its own tunnels. There is no daemon, no IPC, no shared state between invocations. Run `ssht` inside tmux for persistence. Close the process, tunnels close with it. This is the absolute simplest model and the one we commit to.
 
 ```
-sht                         Launch TUI (interactive use)
-sht up <name|group>         Launch TUI with these tunnels pre-started
-sht up <name|group> --bare  Bring up tunnels, log to stdout, no TUI (for tmux/scripts)
-sht add                     Interactive wizard, writes to tunnels.toml then exits
-sht config check            Validate tunnels.toml + ssh config refs
-sht version
+ssht                         Launch TUI (interactive use)
+ssht up <name|group>         Launch TUI with these tunnels pre-started
+ssht up <name|group> --bare  Bring up tunnels, log to stdout, no TUI (for tmux/scripts)
+ssht add                     Interactive wizard, writes to tunnels.toml then exits
+ssht config check            Validate tunnels.toml + ssh config refs
+ssht version
 ```
 
-Notably *absent*: `sht down`, `sht status`, `sht logs` as separate commands. The TUI is the control surface. To stop tunnels, quit the process (or press `space` in the TUI). To see status, look at the TUI (or the status file, below).
+Notably *absent*: `ssht down`, `ssht status`, `ssht logs` as separate commands. The TUI is the control surface. To stop tunnels, quit the process (or press `space` in the TUI). To see status, look at the TUI (or the status file, below).
 
-**Status-bar integration.** `sht --bare` streams newline-delimited JSON events on stdout: pipe to whatever you want (`sht --bare work | sketchybar-renderer`). TUI mode optionally writes the same stream to `--status-file=PATH`, off by default. No global socket, no PID file, no surprises.
+**Status-bar integration.** `ssht --bare` streams newline-delimited JSON events on stdout: pipe to whatever you want (`ssht --bare work | sketchybar-renderer`). TUI mode optionally writes the same stream to `--status-file=PATH`, off by default. No global socket, no PID file, no surprises.
 
 ## TUI design
 
 ### List view (default)
 
 ```
-┌─ sht  ──────────────────────────────────── 4/6 up ─┐
+┌─ ssht  ──────────────────────────────────── 4/6 up ─┐
 │  ▾ GROUP  work-stack          [up]   3/3  ▲ 12K/s  │
 │    ● api-prod     :8443 → bastion-prod  12ms ▁▂▄▅▄▂│
 │    ● pg-replica   :5432 → bastion-prod   8ms ▁▁▂▃▂▁│
@@ -240,7 +240,7 @@ Pressed `enter` on a tunnel:
 - Per-tunnel log buffer (in-memory ring, configurable size)
 - Read identity from `~/.ssh/config`
 - Jump host chains via `ProxyJump`
-- Config validation (`sht config check`)
+- Config validation (`ssht config check`)
 - CLI mode (up/down/status/logs)
 - JSON status for status-bar integration
 - Theme support (built-in dark, light, high-contrast)
@@ -250,7 +250,7 @@ Pressed `enter` on a tunnel:
 
 - **Speed test** — pump configurable payload through tunnel, report throughput
 - **Conditional tunnels** — `only_when_ssid = "OfficeWifi"`, `only_when_reachable = "10.0.0.1"`
-- **Share-as-URL** — encode a tunnel definition (no secrets) as a `shitaki://...` URL for Slack/team sharing
+- **Share-as-URL** — encode a tunnel definition (no secrets) as a `sshiitake://...` URL for Slack/team sharing
 - **Mouse support** — clicks, drag-to-reorder
 - **Notifications** — desktop notification on tunnel down / reconnect, via OS-native paths (`osascript`, `notify-send`)
 
@@ -265,7 +265,7 @@ Pressed `enter` on a tunnel:
 1. **Licence.** GPLv3 (TunnelForge's choice, ensures fork-with-source) vs MIT (broader adoption, friendlier to packaging). Soft lean toward MIT for a tool people will package widely.
 2. **Windows TTY quality.** Bubble Tea works on Windows but the experience is noticeably better in WSL / Windows Terminal than legacy conhost. Decide whether to officially support Windows or "supports Windows Terminal."
 3. **First release scope.** Should v1 ship without auto-reconnect (smaller surface, simpler reasoning) and add it in v1.1, or is auto-reconnect table stakes?
-4. **Config edit semantics.** When `e` opens `$EDITOR`, should shitaki hot-reload on save, or require a reload command? Hot-reload is nicer but adds file-watch complexity.
+4. **Config edit semantics.** When `e` opens `$EDITOR`, should sshiitake hot-reload on save, or require a reload command? Hot-reload is nicer but adds file-watch complexity.
 5. **In-process forwarding vs subprocess `ssh`.** Start with in-process via `crypto/ssh` and fall back to spawning `ssh` only when needed, or always spawn `ssh` (simpler, less control)?
 
 ## Risks
@@ -277,7 +277,7 @@ Pressed `enter` on a tunnel:
 ## Success criteria
 
 1. A new user can install, define their first tunnel, and bring it up in under 5 minutes
-2. Running `sht` on a config with 20 tunnels uses <50 MB RSS and <1% CPU when idle
+2. Running `ssht` on a config with 20 tunnels uses <50 MB RSS and <1% CPU when idle
 3. Auto-reconnect recovers within 10 seconds of network restoration
 4. JSON status integrates with at least one status bar (SketchyBar) out of the box, documented
 5. 500 GitHub stars within 6 months of launch (vanity, but a useful signal of "are people interested?")
