@@ -23,6 +23,7 @@ import (
 // Status describes a tunnel's current state.
 type Status int
 
+// Status values reported by a Tunnel as it progresses through its lifecycle.
 const (
 	StatusDown Status = iota
 	StatusConnecting
@@ -121,7 +122,7 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 		t.setStatus(StatusDown)
 		return fmt.Errorf("dial %s: %w", t.rt.Name, err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	listenAddr := net.JoinHostPort(t.rt.LocalHost, strconv.Itoa(t.rt.LocalPort))
 	ln, err := net.Listen("tcp", listenAddr)

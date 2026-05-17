@@ -69,7 +69,7 @@ func upCmd() *cobra.Command {
 
 			select {
 			case <-started:
-				fmt.Fprintf(cmd.OutOrStdout(),
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 					"tunnel %q up on %s\n", name, tun.LocalAddr())
 				if listenFile != "" {
 					_ = os.WriteFile(listenFile, []byte(tun.LocalAddr()), 0o600)

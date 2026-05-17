@@ -205,7 +205,7 @@ func inProcServeChannel(ch ssh.NewChannel) {
 		_ = ch.Reject(ssh.ConnectionFailed, "bad payload")
 		return
 	}
-	target := fmt.Sprintf("%s:%d", msg.DestAddr, msg.DestPort)
+	target := net.JoinHostPort(msg.DestAddr, strconv.Itoa(int(msg.DestPort)))
 	remote, err := net.Dial("tcp", target)
 	if err != nil {
 		_ = ch.Reject(ssh.ConnectionFailed, err.Error())

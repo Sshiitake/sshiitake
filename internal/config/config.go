@@ -6,6 +6,7 @@ package config
 // TunnelType is the kind of port forward.
 type TunnelType string
 
+// Supported TunnelType values matching the on-disk schema.
 const (
 	TypeLocal   TunnelType = "local"
 	TypeRemote  TunnelType = "remote"

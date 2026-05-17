@@ -3,9 +3,9 @@ package tunnel
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -89,7 +89,7 @@ func handleDirectTCPIP(t *testing.T, ch ssh.NewChannel) {
 		_ = ch.Reject(ssh.ConnectionFailed, "bad payload")
 		return
 	}
-	target := fmt.Sprintf("%s:%d", msg.DestAddr, msg.DestPort)
+	target := net.JoinHostPort(msg.DestAddr, strconv.Itoa(int(msg.DestPort)))
 
 	remote, err := net.Dial("tcp", target)
 	if err != nil {

@@ -63,12 +63,12 @@ func forwardLocal(ctx context.Context, sshClient *ssh.Client, ln net.Listener, r
 }
 
 func pipeOneConn(sshClient *ssh.Client, local net.Conn, remoteAddr string) {
-	defer local.Close()
+	defer func() { _ = local.Close() }()
 	remote, err := sshClient.Dial("tcp", remoteAddr)
 	if err != nil {
 		return
 	}
-	defer remote.Close()
+	defer func() { _ = remote.Close() }()
 
 	done := make(chan struct{}, 2)
 	go func() {

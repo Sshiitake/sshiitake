@@ -40,7 +40,7 @@ func configCheckCmd() *cobra.Command {
 				}
 				_ = rt
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "OK: %d tunnels, %d groups\n",
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "OK: %d tunnels, %d groups\n",
 				len(cfg.Tunnels), len(cfg.Groups))
 			return nil
 		},

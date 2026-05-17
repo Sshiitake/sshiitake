@@ -35,7 +35,7 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the ssht version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintf(cmd.OutOrStdout(),
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"ssht %s (commit %s, built %s)\n", version, commit, date)
 			return nil
 		},
