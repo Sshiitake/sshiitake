@@ -3,8 +3,41 @@
 A TUI SSH tunnel manager. Define your forwards once, see at a glance which are
 up, toggle them with a keystroke.
 
-> **Status: pre-implementation.** Design has been agreed; no code yet. See the
-> design spec at [`docs/design/2026-05-17-sshiitake-design.md`](docs/design/2026-05-17-sshiitake-design.md).
+> **Status: Phase 1 (Foundation) shipped, no TUI yet.** The CLI can bring up
+> a single tunnel from `~/.config/sshiitake/tunnels.toml`. TUI, groups,
+> auto-reconnect, and hot-reload land in later phases.
+
+## Quick Start
+
+Build from source:
+
+```bash
+go install github.com/Sshiitake/sshiitake/cmd/ssht@latest
+```
+
+Create `~/.config/sshiitake/tunnels.toml`:
+
+```toml
+[tunnels.api-prod]
+host = "bastion-prod"           # must exist in ~/.ssh/config
+type = "local"
+local_port = 8443
+remote_host = "api.internal"
+remote_port = 443
+```
+
+Validate, then run:
+
+```bash
+ssht config check     # exits 0 if everything resolves
+ssht up api-prod      # blocks; Ctrl-C to stop
+```
+
+> **Note for Phase 1:** Host-key verification currently requires the
+> `SSHT_TEST_HOSTKEY` env var (base64 of the server's host key). Production
+> `~/.ssh/known_hosts` integration lands in Phase 4. See
+> [`docs/plans/2026-05-17-sshiitake-v1-phase1-foundation.md`](docs/plans/2026-05-17-sshiitake-v1-phase1-foundation.md)
+> for the full limitations list.
 
 ## Why
 
