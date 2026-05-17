@@ -1,0 +1,30 @@
+# Binaries
+ssht
+sshiitake
+/bin/
+/dist/
+
+# Go build artefacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+
+# Coverage / profiling
+coverage.out
+*.cov
+*.prof
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
