@@ -1,3 +1,3 @@
 module github.com/Sshiitake/sshiitake
 
-go 1.24.4
+go 1.24
