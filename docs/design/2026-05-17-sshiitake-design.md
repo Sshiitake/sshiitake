@@ -27,7 +27,7 @@ Nothing in between, especially nothing cross-platform with a real TUI, since STM
 4. Auto-reconnect with backoff when a tunnel drops
 5. Read identity (host, user, key, ProxyJump) from `~/.ssh/config`
 6. Work as both interactive TUI and scriptable CLI
-7. Run on macOS, Linux, Windows (one static binary)
+7. Run on macOS and Linux (one static binary). Windows is deferred indefinitely; Bubble Tea works there but we're not investing in the testing surface for v1
 8. Be approachable to a first-time TUI hacker, with a clean codebase and good docs
 
 ## Non-goals (explicitly out of scope)
@@ -51,7 +51,7 @@ Nothing in between, especially nothing cross-platform with a real TUI, since STM
 | Process model | Single process, foreground | KISS. Tmux solves persistence. |
 | Persistence | None for tunnels themselves; config in `~/.config/sshiitake/tunnels.toml` | Tunnels are intentionally session-scoped |
 | Binary name | `ssht` | 4 chars; reads as "ssh + t". Full `sshiitake` is the package, brand, and docs name. First three keystrokes match `ssh` so muscle memory transfers |
-| License | GPLv3 or MIT (TBD - see open questions) | |
+| Licence | MIT | Matches the rest of the TUI tooling ecosystem (gh, k9s, lazygit, ripgrep, charm tools); keeps packaging friction low for distros and corporate users |
 
 ## Architecture
 
@@ -195,7 +195,6 @@ Pressed `enter` on a tunnel:
 │  Type:           local forward                     │
 │  Host:           bastion-prod (via jumpbox)        │
 │  Forward:        127.0.0.1:8443 → api.internal:443 │
-│  Auto-reconnect: yes                               │
 │  Uptime:         2h 14m                            │
 │  Sent:           1.2 MB    Recv:  18.4 MB          │
 │  Latency:        12ms ▁▂▄▅▄▂▃▂▁▁▂▃▂▁▁▂▃▂▁▁▂▃▂▁    │
@@ -219,7 +218,7 @@ Pressed `enter` on a tunnel:
 | `space` | Toggle tunnel or group |
 | `g` | Operate on group (start/stop all) |
 | `a` | Add tunnel (wizard) |
-| `e` | Edit tunnel (open `$EDITOR` on tunnels.toml at the right line) |
+| `e` | Edit tunnel (open `$EDITOR` on tunnels.toml at the right line; sshiitake hot-reloads the config on save) |
 | `d` | Delete tunnel (confirm) |
 | `l` | Logs |
 | `s` | Speed test through tunnel |
@@ -234,17 +233,24 @@ Pressed `enter` on a tunnel:
 
 - Local / remote / dynamic forwards
 - Named tunnels and groups
-- Auto-reconnect with exponential backoff + jitter
-- Live status (up/down/reconnecting), latency, bandwidth, uptime
+- Live status (up/down), latency, bandwidth, uptime
 - Sparkline bandwidth + latency
 - Per-tunnel log buffer (in-memory ring, configurable size)
 - Read identity from `~/.ssh/config`
 - Jump host chains via `ProxyJump`
 - Config validation (`ssht config check`)
-- CLI mode (up/down/status/logs)
+- Hot-reload of `tunnels.toml` on save (file-watch via `fsnotify`)
+- CLI mode (interactive TUI + `--bare` stdout streaming)
 - JSON status for status-bar integration
 - Theme support (built-in dark, light, high-contrast)
 - ASCII tunnel-type diagrams in help
+
+When a tunnel drops in v1 it stays down; the user gets a clear "down: <reason>" indicator and can press `space` to bring it back up. Auto-reconnect arrives in v1.1.
+
+### v1.1
+
+- **Auto-reconnect** with exponential backoff + jitter. The "reconnecting" status (amber `◐` indicator in the mockup) lights up here, not in v1.
+- Network-change awareness on macOS and Linux: when the default route changes, tunnels in reconnect-backoff retry immediately.
 
 ### v1.5 (post-launch, prioritise by user feedback)
 
@@ -253,6 +259,7 @@ Pressed `enter` on a tunnel:
 - **Share-as-URL** - encode a tunnel definition (no secrets) as a `sshiitake://...` URL for Slack/team sharing
 - **Mouse support** - clicks, drag-to-reorder
 - **Notifications** - desktop notification on tunnel down / reconnect, via OS-native paths (`osascript`, `notify-send`)
+- **Windows support** - test, fix the rough edges, document supported terminals (likely Windows Terminal only)
 
 ### v2 maybe (no commitment)
 
@@ -260,13 +267,15 @@ Pressed `enter` on a tunnel:
 - Plugins / scriptable hooks (`on_connect`, `on_disconnect`)
 - Web UI
 
-## Open questions
+## Resolved decisions
 
-1. **Licence.** GPLv3 (TunnelForge's choice, ensures fork-with-source) vs MIT (broader adoption, friendlier to packaging). Soft lean toward MIT for a tool people will package widely.
-2. **Windows TTY quality.** Bubble Tea works on Windows but the experience is noticeably better in WSL / Windows Terminal than legacy conhost. Decide whether to officially support Windows or "supports Windows Terminal."
-3. **First release scope.** Should v1 ship without auto-reconnect (smaller surface, simpler reasoning) and add it in v1.1, or is auto-reconnect table stakes?
-4. **Config edit semantics.** When `e` opens `$EDITOR`, should sshiitake hot-reload on save, or require a reload command? Hot-reload is nicer but adds file-watch complexity.
-5. **In-process forwarding vs subprocess `ssh`.** Start with in-process via `crypto/ssh` and fall back to spawning `ssh` only when needed, or always spawn `ssh` (simpler, less control)?
+The five open questions in the original draft of this spec have been answered:
+
+1. **Licence: MIT.** Matches the rest of the TUI ecosystem and keeps packaging friction low.
+2. **Windows TTY: deferred indefinitely.** v1 targets macOS and Linux only. Windows support shows up in v1.5 if there's demand and a contributor willing to own the testing surface.
+3. **Auto-reconnect: not v1.** v1 ships without auto-reconnect to keep the initial surface small and the failure modes obvious. Reconnect logic lands in v1.1 with backoff, jitter, and network-change awareness.
+4. **Hot-reload: yes.** The running process watches `tunnels.toml` via `fsnotify` and reloads on save. Pressing `e` opens `$EDITOR` at the relevant line; the diff applies on save without restarting tunnels that are unchanged.
+5. **In-process SSH with fallback.** Default to `golang.org/x/crypto/ssh` for full event-level control. Detect at parse time when a tunnel's resolved ssh config uses an option we don't natively support (`ProxyCommand`, exotic `Match` blocks, custom `KexAlgorithms`, `ControlMaster yes` from outside), and fall back to spawning `ssh` for that specific tunnel. Mixed-mode is fine; the manager doesn't care.
 
 ## Risks
 
@@ -276,8 +285,14 @@ Pressed `enter` on a tunnel:
 
 ## Success criteria
 
+v1:
 1. A new user can install, define their first tunnel, and bring it up in under 5 minutes
 2. Running `ssht` on a config with 20 tunnels uses <50 MB RSS and <1% CPU when idle
-3. Auto-reconnect recovers within 10 seconds of network restoration
-4. JSON status integrates with at least one status bar (SketchyBar) out of the box, documented
-5. 500 GitHub stars within 6 months of launch (vanity, but a useful signal of "are people interested?")
+3. JSON status integrates with at least one status bar (SketchyBar) out of the box, documented
+4. Hot-reload applies a config change in under 500ms with no flicker for unchanged tunnels
+
+v1.1:
+5. Auto-reconnect recovers within 10 seconds of network restoration
+
+Adoption:
+6. 500 GitHub stars within 6 months of v1 launch (vanity, but a useful signal of "are people interested?")
