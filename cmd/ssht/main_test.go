@@ -280,3 +280,17 @@ func reserveLocalPort(t *testing.T) int {
 	require.NoError(t, err)
 	return pi
 }
+
+func TestExitCode_configError(t *testing.T) {
+	code := classifyError(fmt.Errorf("load %s: open: no such file", "tunnels.toml"))
+	assert.Equal(t, 1, code)
+}
+
+func TestExitCode_sshError(t *testing.T) {
+	code := classifyError(fmt.Errorf("dial tcp: handshake failed"))
+	assert.Equal(t, 2, code)
+}
+
+func TestExitCode_nil(t *testing.T) {
+	assert.Equal(t, 0, classifyError(nil))
+}
