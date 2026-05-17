@@ -51,7 +51,7 @@ Nothing in between, especially nothing cross-platform with a real TUI, since STM
 | Process model | Single process, foreground | KISS. Tmux solves persistence. |
 | Persistence | None for tunnels themselves; config in `~/.config/sshiitake/tunnels.toml` | Tunnels are intentionally session-scoped |
 | Binary name | `ssht` | 4 chars; reads as "ssh + t". Full `sshiitake` is the package, brand, and docs name. First three keystrokes match `ssh` so muscle memory transfers |
-| License | GPLv3 or MIT (TBD — see open questions) | |
+| License | GPLv3 or MIT (TBD - see open questions) | |
 
 ## Architecture
 
@@ -91,12 +91,12 @@ Nothing in between, especially nothing cross-platform with a real TUI, since STM
 
 ### Internal units
 
-- **`config`** — load + validate TOML, parse `~/.ssh/config` for host identity, merge into resolved tunnel definitions
-- **`tunnel`** — per-tunnel goroutine: dial, forward, reconnect with backoff, emit events
-- **`manager`** — owns all tunnel goroutines, exposes start/stop/list, broadcasts events to subscribers
-- **`tui`** — Bubble Tea model, subscribes to manager events
-- **`cli`** — non-interactive commands, also subscribes to manager events
-- **`metrics`** — ring buffer per tunnel (latency, bytes-in, bytes-out) for sparklines and JSON status
+- **`config`** - load + validate TOML, parse `~/.ssh/config` for host identity, merge into resolved tunnel definitions
+- **`tunnel`** - per-tunnel goroutine: dial, forward, reconnect with backoff, emit events
+- **`manager`** - owns all tunnel goroutines, exposes start/stop/list, broadcasts events to subscribers
+- **`tui`** - Bubble Tea model, subscribes to manager events
+- **`cli`** - non-interactive commands, also subscribes to manager events
+- **`metrics`** - ring buffer per tunnel (latency, bytes-in, bytes-out) for sparklines and JSON status
 
 Each unit has a clear boundary: `manager` doesn't know about Bubble Tea; `tui` doesn't know how SSH works; `tunnel` doesn't know about other tunnels or groups.
 
@@ -248,11 +248,11 @@ Pressed `enter` on a tunnel:
 
 ### v1.5 (post-launch, prioritise by user feedback)
 
-- **Speed test** — pump configurable payload through tunnel, report throughput
-- **Conditional tunnels** — `only_when_ssid = "OfficeWifi"`, `only_when_reachable = "10.0.0.1"`
-- **Share-as-URL** — encode a tunnel definition (no secrets) as a `sshiitake://...` URL for Slack/team sharing
-- **Mouse support** — clicks, drag-to-reorder
-- **Notifications** — desktop notification on tunnel down / reconnect, via OS-native paths (`osascript`, `notify-send`)
+- **Speed test** - pump configurable payload through tunnel, report throughput
+- **Conditional tunnels** - `only_when_ssid = "OfficeWifi"`, `only_when_reachable = "10.0.0.1"`
+- **Share-as-URL** - encode a tunnel definition (no secrets) as a `sshiitake://...` URL for Slack/team sharing
+- **Mouse support** - clicks, drag-to-reorder
+- **Notifications** - desktop notification on tunnel down / reconnect, via OS-native paths (`osascript`, `notify-send`)
 
 ### v2 maybe (no commitment)
 

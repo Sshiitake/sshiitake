@@ -21,13 +21,27 @@ case.
 
 ## Binary
 
-The installed command is `ssht` — first three keystrokes match `ssh`, so the
+The installed command is `ssht` - first three keystrokes match `ssh`, so the
 muscle memory transfers.
 
 ## Roadmap
 
 See the [design spec](docs/design/2026-05-17-sshiitake-design.md) for the v1
 feature set, architecture, and explicit non-goals.
+
+## Security
+
+Every push and pull request is scanned for accidentally-committed secrets by
+[gitleaks](https://github.com/gitleaks/gitleaks) (see
+[`.github/workflows/gitleaks.yml`](.github/workflows/gitleaks.yml)). A weekly
+scheduled run repeats the scan in case rule definitions change.
+
+To run the same scan locally before pushing:
+
+```bash
+brew install gitleaks
+gitleaks detect --source . --verbose --redact
+```
 
 ## Licence
 
