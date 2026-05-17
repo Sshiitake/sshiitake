@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -18,6 +19,31 @@ import (
 
 	"github.com/Sshiitake/sshiitake/internal/config"
 )
+
+// Status describes a tunnel's current state.
+type Status int
+
+const (
+	StatusDown Status = iota
+	StatusConnecting
+	StatusUp
+	StatusStopping
+)
+
+func (s Status) String() string {
+	switch s {
+	case StatusDown:
+		return "down"
+	case StatusConnecting:
+		return "connecting"
+	case StatusUp:
+		return "up"
+	case StatusStopping:
+		return "stopping"
+	default:
+		return "unknown"
+	}
+}
 
 // Options carries cross-cutting settings shared across tunnels.
 type Options struct {
@@ -36,6 +62,10 @@ type Options struct {
 type Tunnel struct {
 	rt   config.ResolvedTunnel
 	opts Options
+
+	mu        sync.Mutex
+	status    Status
+	localAddr string
 }
 
 // New constructs a Tunnel. It does not connect.
@@ -43,7 +73,79 @@ func New(rt config.ResolvedTunnel, opts Options) *Tunnel {
 	if opts.DialTimeout == 0 {
 		opts.DialTimeout = 10 * time.Second
 	}
-	return &Tunnel{rt: rt, opts: opts}
+	return &Tunnel{rt: rt, opts: opts, status: StatusDown}
+}
+
+// Status returns the current tunnel state.
+func (t *Tunnel) Status() Status {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.status
+}
+
+// LocalAddr returns the actual listen address ("host:port") once Start
+// has succeeded. Empty before then.
+func (t *Tunnel) LocalAddr() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.localAddr
+}
+
+func (t *Tunnel) setStatus(s Status) {
+	t.mu.Lock()
+	t.status = s
+	t.mu.Unlock()
+}
+
+func (t *Tunnel) setLocalAddr(a string) {
+	t.mu.Lock()
+	t.localAddr = a
+	t.mu.Unlock()
+}
+
+// Start dials the SSH server, opens the local listener, and forwards
+// connections. It blocks until ctx is cancelled or a fatal error
+// occurs. The `started` channel is closed once the listener is
+// accepting connections (use to gate on "tunnel is up" in tests and
+// CLI mode).
+func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
+	if t.rt.Type != config.TypeLocal {
+		return fmt.Errorf("tunnel %q: type %q not supported in Phase 1 (local only)",
+			t.rt.Name, t.rt.Type)
+	}
+
+	t.setStatus(StatusConnecting)
+
+	client, err := t.dial(ctx)
+	if err != nil {
+		t.setStatus(StatusDown)
+		return fmt.Errorf("dial %s: %w", t.rt.Name, err)
+	}
+	defer client.Close()
+
+	listenAddr := net.JoinHostPort(t.rt.LocalHost, strconv.Itoa(t.rt.LocalPort))
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		t.setStatus(StatusDown)
+		return fmt.Errorf("listen %s: %w", listenAddr, err)
+	}
+	t.setLocalAddr(ln.Addr().String())
+	t.setStatus(StatusUp)
+	if started != nil {
+		close(started)
+	}
+
+	err = forwardLocal(ctx, client, ln, t.rt.RemoteAddr)
+
+	t.setStatus(StatusStopping)
+	_ = ln.Close()
+	t.setStatus(StatusDown)
+	t.setLocalAddr("")
+
+	if err != nil && ctx.Err() == nil {
+		return err
+	}
+	return nil
 }
 
 // dial opens an SSH client connection. The caller owns the returned
