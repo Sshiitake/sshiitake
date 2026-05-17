@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -17,7 +18,15 @@ bring them up with ` + "`ssht up <name>`" + `.`,
 		SilenceErrors: true,
 	}
 	root.AddCommand(versionCmd())
+	root.AddCommand(configCmd())
 	return root
+}
+
+func defaultConfigPath() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return home + "/.config/sshiitake/tunnels.toml"
+	}
+	return "tunnels.toml"
 }
 
 func versionCmd() *cobra.Command {
