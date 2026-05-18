@@ -40,6 +40,12 @@ ssht up api-prod      # blocks; Ctrl-C to stop
 > ssh-keyscan -H hudson >> ~/.ssh/known_hosts
 > ```
 >
+> For non-standard SSH ports:
+>
+> ```
+> ssh-keyscan -H -p 2200 hudson >> ~/.ssh/known_hosts
+> ```
+>
 > Always verify the printed fingerprint matches the server's reported one
 > before trusting it.
 
