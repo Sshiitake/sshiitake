@@ -237,6 +237,7 @@ Pressed `enter` on a tunnel:
 - Sparkline bandwidth + latency
 - Per-tunnel log buffer (in-memory ring, configurable size)
 - Read identity from `~/.ssh/config`
+- Host-key verification via `~/.ssh/known_hosts` (shipped Phase 1.5)
 - Jump host chains via `ProxyJump`
 - Config validation (`ssht config check`)
 - Hot-reload of `tunnels.toml` on save (file-watch via `fsnotify`)

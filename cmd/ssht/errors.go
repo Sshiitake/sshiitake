@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // classifyError maps an error to a process exit code:
 //
@@ -11,6 +14,11 @@ import "strings"
 func classifyError(err error) int {
 	if err == nil {
 		return 0
+	}
+	// Security-critical: host-key issues route to exit 2 regardless of
+	// how the wrapper formats the message.
+	if errors.Is(err, ErrKeyMismatch) || errors.Is(err, ErrHostNotInKnownHosts) {
+		return 2
 	}
 	msg := err.Error()
 	switch {

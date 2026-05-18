@@ -3,9 +3,9 @@
 A TUI SSH tunnel manager. Define your forwards once, see at a glance which are
 up, toggle them with a keystroke.
 
-> **Status: Phase 1 (Foundation) shipped, no TUI yet.** The CLI can bring up
-> a single tunnel from `~/.config/sshiitake/tunnels.toml`. TUI, groups,
-> auto-reconnect, and hot-reload land in later phases.
+> **Status: Phase 1 + 1.5 shipped, no TUI yet.** The CLI brings up a single
+> tunnel from `~/.config/sshiitake/tunnels.toml` with real `~/.ssh/known_hosts`
+> verification. TUI, groups, auto-reconnect, and hot-reload land in later phases.
 
 ## Quick Start
 
@@ -13,6 +13,13 @@ Build from source:
 
 ```bash
 go install github.com/Sshiitake/sshiitake/cmd/ssht@latest
+```
+
+`go install` puts the binary in `$GOPATH/bin` (default `~/go/bin`). If `ssht`
+isn't found after install, add it to your `PATH`:
+
+```bash
+export PATH="$HOME/go/bin:$PATH"   # add to ~/.zshrc or ~/.bashrc
 ```
 
 Create `~/.config/sshiitake/tunnels.toml`:
@@ -33,11 +40,31 @@ ssht config check     # exits 0 if everything resolves
 ssht up api-prod      # blocks; Ctrl-C to stop
 ```
 
-> **Note for Phase 1:** Host-key verification currently requires the
-> `SSHT_TEST_HOSTKEY` env var (base64 of the server's host key). Production
-> `~/.ssh/known_hosts` integration lands in Phase 4. See
-> [`docs/plans/2026-05-17-sshiitake-v1-phase1-foundation.md`](docs/plans/2026-05-17-sshiitake-v1-phase1-foundation.md)
-> for the full limitations list.
+> **First-time use:** `ssht up <name>` reads `~/.ssh/known_hosts` to verify the
+> server. If the host isn't there yet, ssht tells you exactly what to run:
+>
+> ```
+> ssh-keyscan -H hudson >> ~/.ssh/known_hosts
+> ```
+>
+> For non-standard SSH ports:
+>
+> ```
+> ssh-keyscan -H -p 2200 hudson >> ~/.ssh/known_hosts
+> ```
+>
+> Always verify the printed fingerprint matches the server's reported one
+> before trusting it.
+
+## Flags
+
+`ssht up` and `ssht config check` accept:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--config` | `~/.config/sshiitake/tunnels.toml` | Path to your tunnels.toml |
+| `--ssh-config` | `~/.ssh/config` | Path to ssh_config (read-only, used for host identity) |
+| `--known-hosts` | `~/.ssh/known_hosts` | Path to known_hosts (used for host-key verification) |
 
 ## Why
 
@@ -63,6 +90,27 @@ See the [design spec](docs/design/2026-05-17-sshiitake-design.md) for the v1
 feature set, architecture, and explicit non-goals.
 
 ## Security
+
+### Host-key verification
+
+`ssht up` refuses to connect if the server is not in `~/.ssh/known_hosts`.
+The error message tells you exactly which `ssh-keyscan` command to run.
+
+If the server's key has changed since you saved it, ssht prints a loud
+`KEY MISMATCH` warning and refuses to connect. That's the protection
+against an active MITM. Don't paper over it without understanding why
+the key changed.
+
+### The `SSHT_TEST_HOSTKEY` env var
+
+If you set `SSHT_TEST_HOSTKEY` (base64 of an `ssh.PublicKey`), ssht
+trusts that pinned key INSTEAD of consulting `~/.ssh/known_hosts`. This
+is intended for the integration test fixture only. The binary logs a
+`WARNING` to stderr if you set it in a non-test run, because anyone with
+control of your environment could otherwise silently disable host-key
+verification. Don't set it in production scripts.
+
+### Secret scanning
 
 Every push and pull request is scanned for accidentally-committed secrets by
 [gitleaks](https://github.com/gitleaks/gitleaks) (see

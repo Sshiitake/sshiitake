@@ -294,3 +294,13 @@ func TestExitCode_sshError(t *testing.T) {
 func TestExitCode_nil(t *testing.T) {
 	assert.Equal(t, 0, classifyError(nil))
 }
+
+func TestExitCode_keyMismatch(t *testing.T) {
+	err := fmt.Errorf("some prefix: %w", ErrKeyMismatch)
+	assert.Equal(t, 2, classifyError(err))
+}
+
+func TestExitCode_hostNotKnown(t *testing.T) {
+	err := fmt.Errorf("some prefix: %w", ErrHostNotInKnownHosts)
+	assert.Equal(t, 2, classifyError(err))
+}

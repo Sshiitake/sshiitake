@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,7 +8,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/Sshiitake/sshiitake/internal/config"
 	"github.com/Sshiitake/sshiitake/internal/tunnel"
@@ -18,9 +15,10 @@ import (
 
 func upCmd() *cobra.Command {
 	var (
-		cfgPath    string
-		sshCfgPath string
-		listenFile string // hidden: test-only, write the actual listen address here
+		cfgPath        string
+		sshCfgPath     string
+		knownHostsPath string
+		listenFile     string // hidden: test-only, write the actual listen address here
 	)
 	cmd := &cobra.Command{
 		Use:   "up <name>",
@@ -46,7 +44,7 @@ func upCmd() *cobra.Command {
 			}
 			rt.Name = name
 
-			hostKeyCB, err := buildHostKeyCallback()
+			hostKeyCB, err := buildHostKeyCallback(knownHostsPath)
 			if err != nil {
 				return err
 			}
@@ -85,29 +83,8 @@ func upCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", defaultConfigPath(), "path to tunnels.toml")
 	cmd.Flags().StringVar(&sshCfgPath, "ssh-config", "", "path to ssh_config (default ~/.ssh/config)")
+	cmd.Flags().StringVar(&knownHostsPath, "known-hosts", "", "path to known_hosts (default ~/.ssh/known_hosts)")
 	cmd.Flags().StringVar(&listenFile, "listen-file", "", "test-only: write listen addr to this path")
 	_ = cmd.Flags().MarkHidden("listen-file")
 	return cmd
-}
-
-// buildHostKeyCallback chooses the host-key verification strategy.
-//
-// In tests, SSHT_TEST_HOSTKEY pins a single base64-encoded host key.
-// In production, this will use known_hosts (Phase 4). For Phase 1
-// we deliberately FAIL if neither is set, to avoid silently accepting
-// any host.
-func buildHostKeyCallback() (ssh.HostKeyCallback, error) {
-	if pinned := os.Getenv("SSHT_TEST_HOSTKEY"); pinned != "" {
-		raw, err := base64.StdEncoding.DecodeString(pinned)
-		if err != nil {
-			return nil, fmt.Errorf("SSHT_TEST_HOSTKEY: %w", err)
-		}
-		pub, err := ssh.ParsePublicKey(raw)
-		if err != nil {
-			return nil, fmt.Errorf("SSHT_TEST_HOSTKEY: %w", err)
-		}
-		return ssh.FixedHostKey(pub), nil
-	}
-	return nil, errors.New("host key verification not configured: " +
-		"set SSHT_TEST_HOSTKEY for tests, or wait for Phase 4 known_hosts support")
 }
