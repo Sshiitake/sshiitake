@@ -2843,11 +2843,12 @@ If you have no such host yet, defer this step. The integration test exercising t
 
 These are intentional and documented in the plan rather than deferred-quietly:
 
-1. **Host-key verification via env var only.** `buildHostKeyCallback` in Task 12 requires `SSHT_TEST_HOSTKEY` (base64 of a single pinned key). This makes Phase 1 usable from the integration test but awkward from a user's terminal. Production-ready `known_hosts` integration lands in Phase 4 (or, if you want a usable v1 sooner, can be pulled forward as a new task between current Tasks 12 and 13).
-2. **ProxyJump is parsed but not honoured.** Task 5 reads `ProxyJump` from `~/.ssh/config` into `ResolvedTunnel.ProxyJump`, but Task 7's `dial()` ignores it and connects directly to `SSHHost`. Chain dialling lands in Phase 2 alongside the manager.
-3. **Local forwards only.** Remote (`-R`) and dynamic (`-D`) forwards return a clear "type not supported in Phase 1" error from `Tunnel.Start`. They land in Phase 2.
-4. **No reconnect on drop.** If the SSH connection drops mid-session, the tunnel goes to `StatusDown` and `Start` returns. Auto-reconnect is v1.1 (post-launch).
-5. **Single-tunnel.** `ssht up` runs one tunnel and blocks. Multi-tunnel and groups land in Phase 2.
+1. **ProxyJump is parsed but not honoured.** Task 5 reads `ProxyJump` from `~/.ssh/config` into `ResolvedTunnel.ProxyJump`, but Task 7's `dial()` ignores it and connects directly to `SSHHost`. Chain dialling lands in Phase 2 alongside the manager.
+2. **Local forwards only.** Remote (`-R`) and dynamic (`-D`) forwards return a clear "type not supported in Phase 1" error from `Tunnel.Start`. They land in Phase 2.
+3. **No reconnect on drop.** If the SSH connection drops mid-session, the tunnel goes to `StatusDown` and `Start` returns. Auto-reconnect is v1.1 (post-launch).
+4. **Single-tunnel.** `ssht up` runs one tunnel and blocks. Multi-tunnel and groups land in Phase 2.
+
+Host-key verification via `~/.ssh/known_hosts` was pulled forward as Phase 1.5 (shipped 2026-05-18, see `docs/plans/2026-05-18-known-hosts-phase-1-5.md`).
 
 If any of these limitations are blockers for what you want to demo first, raise them now and we'll fold the fix into Phase 1 before execution.
 
@@ -2871,9 +2872,9 @@ Approx 15-20 tasks. Big rocks: list model, detail model, sparkline rendering, ke
 
 ### Phase 4: Hot-reload and subprocess fallback
 
-Adds `fsnotify` watching on `tunnels.toml` with a diff-and-apply algorithm that only restarts changed tunnels. Adds the subprocess fallback for tunnels whose ssh-config uses unsupported options (`ProxyCommand`, exotic `Match`, etc.). Wires `known_hosts` into the production host-key callback.
+Adds `fsnotify` watching on `tunnels.toml` with a diff-and-apply algorithm that only restarts changed tunnels. Adds the subprocess fallback for tunnels whose ssh-config uses unsupported options (`ProxyCommand`, exotic `Match`, etc.).
 
-Approx 8-10 tasks. Big rocks: file-watch + reload loop, tunnel diff algorithm, subprocess wrapper, known_hosts integration.
+Approx 6-8 tasks. Big rocks: file-watch + reload loop, tunnel diff algorithm, subprocess wrapper. (known_hosts integration shipped in Phase 1.5.)
 
 ---
 
