@@ -93,7 +93,7 @@ func TestBuildHostKey_nonStandardPort_emitsCorrectScanCommand(t *testing.T) {
 	cb, err := buildHostKeyCallback(khPath)
 	require.NoError(t, err)
 
-	// Hostname:port for a non-standard port — should emit -p flag and
+	// Hostname:port for a non-standard port - should emit -p flag and
 	// [host]:port bracket form in the keygen advice.
 	addr := &fakeAddr{net: "tcp", str: "203.0.113.10:2200"}
 	err = cb("203.0.113.10:2200", addr, pub)

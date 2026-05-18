@@ -45,7 +45,7 @@ func buildHostKeyCallback(knownHostsPath string) (ssh.HostKeyCallback, error) {
 	if pinned := os.Getenv("SSHT_TEST_HOSTKEY"); pinned != "" {
 		if !testing.Testing() {
 			fmt.Fprintln(os.Stderr,
-				"ssht: WARNING — SSHT_TEST_HOSTKEY is set in a non-test binary; "+
+				"ssht: WARNING - SSHT_TEST_HOSTKEY is set in a non-test binary; "+
 					"this BYPASSES ~/.ssh/known_hosts verification. "+
 					"If you didn't intend this, unset the variable.")
 		}
@@ -104,7 +104,7 @@ func wrapKnownHostsCallback(inner ssh.HostKeyCallback, khPath string) ssh.HostKe
 			// that disagrees with the presented one (MITM or rotation).
 			if len(keyErr.Want) > 0 {
 				return fmt.Errorf(
-					"KEY MISMATCH for %s — saved key disagrees with the host's current key. "+
+					"KEY MISMATCH for %s - saved key disagrees with the host's current key. "+
 						"This could be a server reinstall, key rotation, or an active MITM. "+
 						"If you trust the change, remove the old entry: "+
 						"`ssh-keygen -R %s -f %s`, then re-add with `%s >> %s`: %w",
