@@ -3,11 +3,12 @@
 A TUI SSH tunnel manager. Define your forwards once, see at a glance which are
 up, toggle them with a keystroke.
 
-> **Status: Phase 1 + 1.5 + 2 + 3 shipped.** TUI by default on TTY;
+> **Status: v1.0 - Phase 1, 1.5, 2, 3, 4 shipped.** TUI by default on TTY;
 > `--bare`/`--no-tui` for non-interactive use. The CLI brings up one or more
 > tunnels (or a named group) from `~/.config/sshiitake/tunnels.toml`, with
-> `~/.ssh/known_hosts` verification and per-tunnel metrics. `--bare` streams
-> JSON events for status-bar integration.
+> `~/.ssh/known_hosts` verification, per-tunnel metrics, auto-reconnect, and
+> hot-reload of `tunnels.toml`. `--bare` streams JSON events for status-bar
+> integration.
 
 ## Quick Start
 
@@ -74,6 +75,31 @@ Key bindings:
 
 Themes: `--theme dark` (default), `--theme light`, `--theme high-contrast`.
 
+### TUI walkthrough
+
+An asciinema cast walking through the list view, detail view, filter,
+and space-to-toggle is in progress and will land in this section before
+the v1.0 tag is announced. In the meantime, the easiest tour is to drop
+two or three forwards into your `tunnels.toml`, run `ssht up`, and
+exercise the bindings above.
+
+### Auto-reconnect
+
+Tunnels reconnect automatically on transient errors (EOF, connection
+reset, handshake failure, timeout, broken pipe, no route to host). The
+backoff schedule is 1s, 2s, 4s, 8s, 16s, 32s, 60s (capped) with 10%
+jitter, capped at 10 consecutive attempts. Permanent failures (host-key
+mismatch, unsupported config options, no usable auth methods) skip the
+loop and surface immediately. Pass `--no-reconnect` to opt out.
+
+### Hot-reload
+
+`ssht up` watches `tunnels.toml` and applies edits without restarting
+the process. Added tunnels start; removed tunnels stop; modified
+tunnels restart with the new config. Validation errors are printed to
+stderr with a `[reload]` prefix; running tunnels are never torn down by
+a bad edit. Pass `--no-reload` to opt out.
+
 ## Adding tunnels interactively
 
 ```bash
@@ -120,6 +146,8 @@ ssht up --bare api-prod | sketchybar-renderer
 | `--known-hosts` | `~/.ssh/known_hosts` | Path to known_hosts (used for host-key verification) |
 | `--bare` | (off) | Stream newline-delimited JSON events to stdout (no human-friendly output) |
 | `--no-tui` | (off) | Force the human-readable stream even on a TTY |
+| `--no-reconnect` | (off) | Disable auto-reconnect; a dropped tunnel stays down until manually toggled |
+| `--no-reload` | (off) | Disable hot-reload of `tunnels.toml` |
 | `--theme` | `dark` | TUI palette: `dark`, `light`, or `high-contrast` |
 
 ## Why
@@ -144,6 +172,12 @@ muscle memory transfers.
 
 See the [design spec](docs/design/2026-05-17-sshiitake-design.md) for the v1
 feature set, architecture, and explicit non-goals.
+
+## Contributing
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) is the 5-minute tour of the codebase.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, style, and PR
+  conventions.
 
 ## Security
 
