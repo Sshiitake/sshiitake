@@ -159,6 +159,23 @@ register it in `main.go`. Long-running commands that drive the manager
 follow the `up.go` pattern (Manager + Subscribe + signal-aware ctx +
 either TUI or stream loop).
 
+## Testing
+
+The test suite favours unit tests with focused integration tests where
+the interaction surface (SSH handshake, fsnotify wake-up, Bubble Tea
+event loop) is the actual subject under test. `go test -race ./...`
+runs cleanly across all packages.
+
+### Coverage gaps documented for follow-up
+
+- **Auto-reconnect end-to-end.** `internal/tunnel` covers the backoff
+  arithmetic (`TestBackoff_progression`, `TestBackoff_jitterStaysInBounds`)
+  and the permanent vs transient error classification
+  (`TestIsReconnectableError*`), but does not exercise a real
+  Start -> drop -> reconnect -> Start cycle against a live SSH server.
+  Adding an integration test that restarts the test SSH server mid-Start
+  is on the v1.1 backlog.
+
 ## Out of scope (deliberate)
 
 Things the architecture explicitly does NOT do:

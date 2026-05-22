@@ -48,6 +48,10 @@ phased plan in `docs/design/`.
 - Subprocess SSH fallback is deferred to a future minor release. Until
   then, tunnels whose ssh_config requires `ProxyCommand`, exotic
   `Match` blocks, or `ControlMaster yes` are not supported.
+- Auto-reconnect is unit-tested for backoff arithmetic and error
+  classification but not end-to-end against a real SSH server restart.
+  Full Start/drop/reconnect integration coverage is targeted for a
+  future release.
 
 ## Phase 3 - 2026-05-22
 

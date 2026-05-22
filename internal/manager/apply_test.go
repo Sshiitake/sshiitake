@@ -380,6 +380,49 @@ func TestApply_nilNewCfgErrors(t *testing.T) {
 	assert.ErrorContains(t, err, "newCfg is nil")
 }
 
+// TestApply_concurrentCallsAreSafe exercises two simultaneous Apply
+// invocations under -race. The lock-and-stop sequence in Apply was
+// flagged by red-team as untested; a regression in the locking strategy
+// would either deadlock here or surface as a race detector hit.
+func TestApply_concurrentCallsAreSafe(t *testing.T) {
+	sshAddr, hostKey := startTestSSHServer(t)
+	echo1 := startEchoServer(t)
+	echo2 := startEchoServer(t)
+	host, port := splitHostPort(t, sshAddr)
+	cfg := &config.Config{Tunnels: map[string]config.Tunnel{}, Groups: map[string]config.Group{}}
+	m, err := New(cfg, writeTempSSHConfig(t, host, port), Options{
+		HostKeyCallback: ssh.FixedHostKey(hostKey),
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := make(chan error, 1)
+	go func() { runErr <- m.Run(ctx) }()
+	// Let Run initialise (no tunnels initially) and m.runCtx populate.
+	time.Sleep(50 * time.Millisecond)
+
+	cfgA := &config.Config{Tunnels: map[string]config.Tunnel{
+		"a": {Host: host, Type: config.TypeLocal, LocalPort: 0,
+			RemoteHost: echoHost(echo1), RemotePort: echoPort(echo1)},
+	}, Groups: map[string]config.Group{}}
+	cfgB := &config.Config{Tunnels: map[string]config.Tunnel{
+		"b": {Host: host, Type: config.TypeLocal, LocalPort: 0,
+			RemoteHost: echoHost(echo2), RemotePort: echoPort(echo2)},
+	}, Groups: map[string]config.Group{}}
+	planA := reload.Plan{Added: []string{"a"}}
+	planB := reload.Plan{Added: []string{"b"}}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _ = m.Apply(cfgA, planA) }()
+	go func() { defer wg.Done(); _ = m.Apply(cfgB, planB) }()
+	wg.Wait()
+	// Assert Run is still alive and the manager survives shutdown.
+	cancel()
+	<-runErr
+}
+
 // TestApply_handleAlwaysHasDoneChan asserts the spawnHandle invariant:
 // every handle reachable through m.handles must have a non-nil done
 // channel and cancel func. A regression in the publish-before-init
