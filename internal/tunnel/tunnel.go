@@ -57,6 +57,15 @@ type Options struct {
 	// DialTimeout is the maximum time for the initial TCP+SSH handshake.
 	// If zero, defaults to 10s.
 	DialTimeout time.Duration
+
+	// Reconnect enables auto-reconnect with exponential backoff: when
+	// Start returns due to a transient SSH error, StartWithReconnect
+	// will retry up to Backoff.MaxAttempts times.
+	Reconnect bool
+
+	// Backoff configures the reconnect schedule. Zero-value receives
+	// sane defaults (1s..60s, 10% jitter, 10 attempts).
+	Backoff BackoffOptions
 }
 
 // Tunnel represents a single configured tunnel. Construct with New,
@@ -168,6 +177,62 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 		return err
 	}
 	return nil
+}
+
+// StartWithReconnect wraps Start with an exponential-backoff retry
+// loop. Transient SSH errors (EOF, connection reset, handshake
+// failures, timeouts) trigger a retry; permanent errors (host-key
+// mismatch, unsupported config options, no usable auth) short-circuit
+// and surface immediately.
+//
+// The first attempt receives the supplied started channel; subsequent
+// attempts pass nil so callers see exactly one "up" signal across the
+// reconnect lifecycle.
+//
+// When t.opts.Reconnect is false this is a thin pass-through to Start.
+func (t *Tunnel) StartWithReconnect(ctx context.Context, started chan<- struct{}) error {
+	if !t.opts.Reconnect {
+		return t.Start(ctx, started)
+	}
+
+	// Production default: 10% jitter when caller left it at zero. Tests
+	// drive newBackoff directly with Jitter=0 for deterministic
+	// progression assertions, so the default lives here at the
+	// public-API boundary rather than in applyDefaults.
+	bo := t.opts.Backoff
+	if bo.Jitter == 0 {
+		bo.Jitter = 0.1
+	}
+	b := newBackoff(bo)
+	// applyDefaults runs inside newBackoff against a copy; pull the
+	// resolved MaxAttempts back out so the bound below matches.
+	maxAttempts := b.opts.MaxAttempts
+
+	attempts := 0
+	notify := started
+	for {
+		attempts++
+		err := t.Start(ctx, notify)
+		notify = nil // subsequent loops do not re-signal "up".
+
+		if ctx.Err() != nil {
+			return nil
+		}
+		if !isReconnectableError(err) {
+			return err
+		}
+		if attempts >= maxAttempts {
+			return fmt.Errorf("tunnel %q: gave up after %d attempts: %w", t.rt.Name, attempts, err)
+		}
+
+		t.setStatus(StatusConnecting)
+		delay := b.next()
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }
 
 // dial opens an SSH client connection. The caller owns the returned

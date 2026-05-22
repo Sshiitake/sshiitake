@@ -23,6 +23,7 @@ func upCmd() *cobra.Command {
 		listenFile     string
 		bare           bool
 		noTUI          bool
+		noReconnect    bool
 		theme          string
 	)
 	cmd := &cobra.Command{
@@ -46,6 +47,7 @@ func upCmd() *cobra.Command {
 			m, err := manager.New(cfg, sshCfgPath, manager.Options{
 				Selectors:       args,
 				HostKeyCallback: hostKeyCB,
+				Reconnect:       !noReconnect,
 			})
 			if err != nil {
 				return err
@@ -95,6 +97,7 @@ func upCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("listen-file")
 	cmd.Flags().BoolVar(&bare, "bare", false, "stream newline-delimited JSON events to stdout; no human-friendly output")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "disable the TUI even when stdout is a TTY; stream human-friendly events instead")
+	cmd.Flags().BoolVar(&noReconnect, "no-reconnect", false, "do not auto-reconnect tunnels that drop")
 	cmd.Flags().StringVar(&theme, "theme", tui.DefaultThemeName, "TUI theme: dark, light, or high-contrast")
 	return cmd
 }

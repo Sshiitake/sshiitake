@@ -29,13 +29,20 @@ type Options struct {
 	// ssh.InsecureIgnoreHostKey() when the test setup never reaches the
 	// handshake (e.g. dial-error tests). Tunnel.dial enforces non-nil.
 	HostKeyCallback ssh.HostKeyCallback
+
+	// Reconnect, when true, causes every tunnel to be driven via
+	// Tunnel.StartWithReconnect (exponential backoff on transient SSH
+	// errors). Default false to keep tests deterministic; cmd/ssht/up
+	// flips this to true unless --no-reconnect is supplied.
+	Reconnect bool
 }
 
 // Manager owns a set of tunnels and exposes lifecycle controls + event
 // subscription.
 type Manager struct {
-	tunnels []*tunnel.Tunnel
-	subs    *subscribers
+	tunnels   []*tunnel.Tunnel
+	subs      *subscribers
+	reconnect bool
 }
 
 // New builds a Manager from config + ssh config path + options.
@@ -58,12 +65,14 @@ func New(cfg *config.Config, sshConfigPath string, opts Options) (*Manager, erro
 		rt.Name = name
 		tunnels = append(tunnels, tunnel.New(rt, tunnel.Options{
 			HostKeyCallback: opts.HostKeyCallback,
+			Reconnect:       opts.Reconnect,
 		}))
 	}
 
 	return &Manager{
-		tunnels: tunnels,
-		subs:    newSubscribers(),
+		tunnels:   tunnels,
+		subs:      newSubscribers(),
+		reconnect: opts.Reconnect,
 	}, nil
 }
 
@@ -149,7 +158,13 @@ func (m *Manager) startMetricsTicker(ctx context.Context) {
 func (m *Manager) runOne(ctx context.Context, t *tunnel.Tunnel) error {
 	started := make(chan struct{})
 	done := make(chan error, 1)
-	go func() { done <- t.Start(ctx, started) }()
+	go func() {
+		if m.reconnect {
+			done <- t.StartWithReconnect(ctx, started)
+			return
+		}
+		done <- t.Start(ctx, started)
+	}()
 
 	// Wait for either started (listener accepting) or done (Start
 	// returned an error before signalling started, e.g. dial or listen
