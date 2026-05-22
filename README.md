@@ -3,9 +3,10 @@
 A TUI SSH tunnel manager. Define your forwards once, see at a glance which are
 up, toggle them with a keystroke.
 
-> **Status: Phase 1 + 1.5 shipped, no TUI yet.** The CLI brings up a single
-> tunnel from `~/.config/sshiitake/tunnels.toml` with real `~/.ssh/known_hosts`
-> verification. TUI, groups, auto-reconnect, and hot-reload land in later phases.
+> **Status: Phase 1 + 1.5 + 2 shipped, no TUI yet.** The CLI brings up one or
+> more tunnels (or a named group) from `~/.config/sshiitake/tunnels.toml`, with
+> `~/.ssh/known_hosts` verification and per-tunnel metrics. `--bare` streams
+> JSON events for status-bar integration. TUI lands in Phase 3.
 
 ## Quick Start
 
@@ -40,6 +41,25 @@ ssht config check     # exits 0 if everything resolves
 ssht up api-prod      # blocks; Ctrl-C to stop
 ```
 
+Bring up several tunnels at once:
+
+```bash
+ssht up api-prod pg-replica redis
+```
+
+Bring up a named group (defined under `[groups.<name>]` in your config):
+
+```bash
+ssht up work-stack
+```
+
+Stream newline-delimited JSON events for a status bar (SketchyBar, xbar,
+Waybar, tmux status, anything line-buffered):
+
+```bash
+ssht up --bare api-prod | sketchybar-renderer
+```
+
 > **First-time use:** `ssht up <name>` reads `~/.ssh/known_hosts` to verify the
 > server. If the host isn't there yet, ssht tells you exactly what to run:
 >
@@ -65,6 +85,7 @@ ssht up api-prod      # blocks; Ctrl-C to stop
 | `--config` | `~/.config/sshiitake/tunnels.toml` | Path to your tunnels.toml |
 | `--ssh-config` | `~/.ssh/config` | Path to ssh_config (read-only, used for host identity) |
 | `--known-hosts` | `~/.ssh/known_hosts` | Path to known_hosts (used for host-key verification) |
+| `--bare` | (off) | Stream newline-delimited JSON events to stdout (no human-friendly output) |
 
 ## Why
 
