@@ -118,7 +118,8 @@ func (l *listModel) selected() (tunnelRow, bool) {
 // view renders the list as a string.
 func (l *listModel) view() string {
 	if len(l.tunnels) == 0 {
-		return l.theme.HelpText.Render("no tunnels yet. define some in ~/.config/sshiitake/tunnels.toml")
+		return l.theme.HelpText.Render(
+			"no tunnels yet. edit ~/.config/sshiitake/tunnels.toml or run `ssht add` to create one interactively.")
 	}
 
 	visible := l.visibleTunnels()

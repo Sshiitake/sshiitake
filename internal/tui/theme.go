@@ -70,10 +70,10 @@ func lightTheme() Theme {
 		LatencyGood:      lipgloss.NewStyle().Foreground(c("28")),
 		LatencyWarn:      lipgloss.NewStyle().Foreground(c("130")),
 		LatencyBad:       lipgloss.NewStyle().Foreground(c("124")),
-		HelpText:         lipgloss.NewStyle().Foreground(c("243")),
+		HelpText:         lipgloss.NewStyle().Foreground(c("240")),
 		ErrorText:        lipgloss.NewStyle().Foreground(c("124")).Bold(true),
 		Accent:           lipgloss.NewStyle().Foreground(c("32")),
-		Border:           lipgloss.NewStyle().Foreground(c("243")),
+		Border:           lipgloss.NewStyle().Foreground(c("240")),
 	}
 }
 

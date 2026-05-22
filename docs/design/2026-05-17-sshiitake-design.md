@@ -1,6 +1,6 @@
 # Sshiitake: TUI SSH Tunnel Manager
 
-**Status:** Draft
+**Status:** Active (Phase 1, 1.5, 2, 3 shipped; Phase 4 next)
 **Date:** 2026-05-17
 **Author:** Adam Neilson
 
