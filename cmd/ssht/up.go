@@ -5,11 +5,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Sshiitake/sshiitake/internal/config"
+	"github.com/Sshiitake/sshiitake/internal/manager"
 	"github.com/Sshiitake/sshiitake/internal/tunnel"
 )
 
@@ -18,15 +18,14 @@ func upCmd() *cobra.Command {
 		cfgPath        string
 		sshCfgPath     string
 		knownHostsPath string
-		listenFile     string // hidden: test-only, write the actual listen address here
+		listenFile     string
+		bare           bool
 	)
 	cmd := &cobra.Command{
-		Use:   "up <name>",
-		Short: "Bring up a tunnel by name and run until interrupted",
-		Args:  cobra.ExactArgs(1),
+		Use:   "up <name|group>...",
+		Short: "Bring up one or more tunnels (or a group) and run until interrupted",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-
 			cfg, err := config.Load(cfgPath)
 			if err != nil {
 				return err
@@ -34,57 +33,83 @@ func upCmd() *cobra.Command {
 			if err := cfg.Validate(); err != nil {
 				return err
 			}
-			rawTunnel, ok := cfg.TunnelByName(name)
-			if !ok {
-				return fmt.Errorf("tunnel %q not found in %s", name, cfgPath)
-			}
-			rt, err := config.ResolveWithSSHConfig(rawTunnel, sshCfgPath)
-			if err != nil {
-				return err
-			}
-			rt.Name = name
 
 			hostKeyCB, err := buildHostKeyCallback(knownHostsPath)
 			if err != nil {
 				return err
 			}
 
-			tun := tunnel.New(rt, tunnel.Options{
-				HostKeyCallback: hostKeyCB,
-				DialTimeout:     10 * time.Second,
+			m, err := manager.New(cfg, sshCfgPath, manager.Options{
+				Selectors:           args,
+				HostKeyCallback:     hostKeyCB,
+				HostKeyVerification: true,
 			})
+			if err != nil {
+				return err
+			}
 
 			ctx, cancel := signal.NotifyContext(cmd.Context(),
 				os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			started := make(chan struct{})
+			eventCh := m.Subscribe(256)
+			defer m.Unsubscribe(eventCh)
 
-			errCh := make(chan error, 1)
-			go func() {
-				errCh <- tun.Start(ctx, started)
-			}()
+			runErr := make(chan error, 1)
+			go func() { runErr <- m.Run(ctx) }()
 
-			select {
-			case <-started:
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"tunnel %q up on %s\n", name, tun.LocalAddr())
-				if listenFile != "" {
-					_ = os.WriteFile(listenFile, []byte(tun.LocalAddr()), 0o600)
-				}
-			case err := <-errCh:
-				return err
-			case <-ctx.Done():
-				return nil
+			if bare {
+				return streamBareEvents(cmd, eventCh, runErr, m)
 			}
 
-			return <-errCh
+			return streamHumanEvents(cmd, eventCh, runErr, m, listenFile)
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", defaultConfigPath(), "path to tunnels.toml")
 	cmd.Flags().StringVar(&sshCfgPath, "ssh-config", "", "path to ssh_config (default ~/.ssh/config)")
 	cmd.Flags().StringVar(&knownHostsPath, "known-hosts", "", "path to known_hosts (default ~/.ssh/known_hosts)")
-	cmd.Flags().StringVar(&listenFile, "listen-file", "", "test-only: write listen addr to this path")
+	cmd.Flags().StringVar(&listenFile, "listen-file", "", "test-only: write first tunnel listen addr here")
 	_ = cmd.Flags().MarkHidden("listen-file")
+	cmd.Flags().BoolVar(&bare, "bare", false, "stream newline-delimited JSON events to stdout; no human-friendly output")
 	return cmd
+}
+
+// streamHumanEvents prints state changes to the user until ctx is done
+// or Run returns.
+func streamHumanEvents(cmd *cobra.Command, eventCh chan manager.Event, runErr chan error, m *manager.Manager, listenFile string) error {
+	out := cmd.OutOrStdout()
+	upCount := 0
+
+	for {
+		select {
+		case e, ok := <-eventCh:
+			if !ok {
+				return <-runErr
+			}
+			if e.Type == manager.EventTunnelState {
+				switch e.Status {
+				case tunnel.StatusUp:
+					upCount++
+					for _, tun := range m.Tunnels() {
+						if tun.Name() == e.TunnelName {
+							_, _ = fmt.Fprintf(out, "tunnel %q up on %s\n", e.TunnelName, tun.LocalAddr())
+							if listenFile != "" && upCount == 1 {
+								_ = os.WriteFile(listenFile, []byte(tun.LocalAddr()), 0o600)
+							}
+							break
+						}
+					}
+				case tunnel.StatusDown:
+					_, _ = fmt.Fprintf(out, "tunnel %q down\n", e.TunnelName)
+				}
+			}
+		case err := <-runErr:
+			return err
+		}
+	}
+}
+
+// streamBareEvents is stubbed in Task 11 and implemented in Task 12.
+func streamBareEvents(_ *cobra.Command, _ chan manager.Event, _ chan error, _ *manager.Manager) error {
+	return fmt.Errorf("--bare is not yet wired up; see Task 12")
 }
