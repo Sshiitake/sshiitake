@@ -2,17 +2,18 @@
 // config (optionally filtered by selector names or group), drives the
 // lifecycle in parallel, and broadcasts events to subscribers.
 //
-// Phase 2 covers structural support; the consumer wiring (CLI --bare
-// stream, future TUI) is in cmd/ssht.
+// Each managed tunnel has its own derived context and cancel function
+// so Apply (hot-reload) can stop a specific tunnel without disturbing
+// the others.
 package manager
 
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/Sshiitake/sshiitake/internal/config"
 	"github.com/Sshiitake/sshiitake/internal/tunnel"
@@ -20,9 +21,10 @@ import (
 
 // Options configures Manager construction.
 type Options struct {
-	// Selectors filters the tunnels to manage. An empty slice means "all
-	// tunnels in config". A name matches a single tunnel; a group name
-	// expands to its members.
+	// Selectors filters the tunnels to manage at startup. An empty slice
+	// means "all tunnels in config". A name matches a single tunnel; a
+	// group name expands to its members. After construction, Apply may
+	// add tunnels outside this selector if the user edits the config.
 	Selectors []string
 
 	// HostKeyCallback is required for production use. Tests may supply
@@ -37,12 +39,28 @@ type Options struct {
 	Reconnect bool
 }
 
+// tunnelHandle pairs a tunnel with the lifecycle plumbing that lets
+// Apply stop it without disturbing siblings.
+type tunnelHandle struct {
+	tunnel *tunnel.Tunnel
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 // Manager owns a set of tunnels and exposes lifecycle controls + event
 // subscription.
 type Manager struct {
-	tunnels   []*tunnel.Tunnel
-	subs      *subscribers
-	reconnect bool
+	subs       *subscribers
+	reconnect  bool
+	sshCfgPath string
+	tunnelOpts tunnel.Options
+
+	// runCtx is the parent context Run was called with. Per-tunnel
+	// contexts derive from this so a root cancel still stops everything.
+	// Set on Run entry; nil before Run is called.
+	mu      sync.Mutex
+	runCtx  context.Context // nolint:containedctx // intentional: parent for derived per-tunnel contexts
+	handles map[string]*tunnelHandle
 }
 
 // New builds a Manager from config + ssh config path + options.
@@ -52,7 +70,12 @@ func New(cfg *config.Config, sshConfigPath string, opts Options) (*Manager, erro
 		return nil, err
 	}
 
-	tunnels := make([]*tunnel.Tunnel, 0, len(names))
+	tunnelOpts := tunnel.Options{
+		HostKeyCallback: opts.HostKeyCallback,
+		Reconnect:       opts.Reconnect,
+	}
+
+	handles := make(map[string]*tunnelHandle, len(names))
 	for _, name := range names {
 		raw, ok := cfg.TunnelByName(name)
 		if !ok {
@@ -63,24 +86,30 @@ func New(cfg *config.Config, sshConfigPath string, opts Options) (*Manager, erro
 			return nil, fmt.Errorf("resolve %q: %w", name, err)
 		}
 		rt.Name = name
-		tunnels = append(tunnels, tunnel.New(rt, tunnel.Options{
-			HostKeyCallback: opts.HostKeyCallback,
-			Reconnect:       opts.Reconnect,
-		}))
+		handles[name] = &tunnelHandle{
+			tunnel: tunnel.New(rt, tunnelOpts),
+		}
 	}
 
 	return &Manager{
-		tunnels:   tunnels,
-		subs:      newSubscribers(),
-		reconnect: opts.Reconnect,
+		subs:       newSubscribers(),
+		reconnect:  opts.Reconnect,
+		sshCfgPath: sshConfigPath,
+		tunnelOpts: tunnelOpts,
+		handles:    handles,
 	}, nil
 }
 
-// Tunnels returns the tunnels owned by this manager. The slice is a
-// shallow copy; mutating its order is fine.
+// Tunnels returns a snapshot of the tunnels owned by this manager.
+// The slice is freshly allocated; iteration order is undefined (callers
+// that need stability should sort by name).
 func (m *Manager) Tunnels() []*tunnel.Tunnel {
-	out := make([]*tunnel.Tunnel, len(m.tunnels))
-	copy(out, m.tunnels)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*tunnel.Tunnel, 0, len(m.handles))
+	for _, h := range m.handles {
+		out = append(out, h.tunnel)
+	}
 	return out
 }
 
@@ -91,31 +120,170 @@ func (m *Manager) Subscribe(buf int) chan Event { return m.subs.Subscribe(buf) }
 func (m *Manager) Unsubscribe(ch chan Event) { m.subs.Unsubscribe(ch) }
 
 // Run starts all tunnels concurrently and blocks until ctx is
-// cancelled. Returns the first error from any tunnel that fails fatally
-// (e.g. dial error); other tunnels are stopped before Run returns.
-// On graceful shutdown (ctx cancel), returns nil.
+// cancelled. Returns nil on graceful shutdown.
+//
+// Unlike the pre-Apply implementation this does NOT return the first
+// tunnel error: with hot-reload + Apply, a single tunnel failing is a
+// recoverable condition the user may fix by editing the config, not a
+// reason to tear down the rest of the set. The error is still surfaced
+// via EventTunnelState{Down, Message}.
+//
+// The first tunnel dial failure is still preserved as Run's return
+// value when ctx is not cancelled, so existing tests (notably
+// TestRun_dialFailureDoesNotDeadlock) keep their semantics.
 func (m *Manager) Run(ctx context.Context) error {
 	defer m.subs.closeAll()
 
+	m.mu.Lock()
+	m.runCtx = ctx
+	// Snapshot the initial set; spawn each one. Apply may add more
+	// during the run.
+	initial := make([]*tunnelHandle, 0, len(m.handles))
+	for _, h := range m.handles {
+		initial = append(initial, h)
+	}
+	m.mu.Unlock()
+
 	m.startMetricsTicker(ctx)
 
-	// Preserve the outer ctx so we can distinguish graceful shutdown
-	// (caller cancelled) from a tunnel failing. errgroup.WithContext
-	// returns a derived ctx that it cancels as soon as any goroutine
-	// returns non-nil, so checking gctx.Err() == nil after Wait() would
-	// always be false on error and we'd swallow the error.
-	outerCtx := ctx
-	g, gctx := errgroup.WithContext(ctx)
-	for _, t := range m.tunnels {
-		t := t // capture
-		g.Go(func() error {
-			return m.runOne(gctx, t)
+	// errCh receives the FIRST non-nil error from the initial tunnel
+	// set so dial-failure semantics survive. Apply-spawned tunnels do
+	// not feed errCh: they're advisory and reported via events.
+	errCh := make(chan error, len(initial))
+	var wg sync.WaitGroup
+	for _, h := range initial {
+		h := h
+		wg.Add(1)
+		m.spawnHandle(ctx, h, &wg, errCh)
+	}
+
+	// Wait until either ctx is cancelled or all initial tunnels have
+	// returned. Apply-added tunnels can still be running; they'll
+	// receive the ctx cancellation through their derived contexts.
+	allDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(allDone)
+	}()
+
+	var firstErr error
+	gotError := false
+	for {
+		select {
+		case <-ctx.Done():
+			// Wait for all (including Apply-added) handles to drain.
+			m.waitAllHandles()
+			return nil
+		case err := <-errCh:
+			if !gotError && err != nil {
+				firstErr = err
+				gotError = true
+			}
+		case <-allDone:
+			// All initial handles finished. If anyone reported an error
+			// and the caller did not cancel us, surface it.
+			if firstErr != nil && ctx.Err() == nil {
+				m.waitAllHandles()
+				return firstErr
+			}
+			// No errors but caller hasn't cancelled. Keep the manager
+			// alive so Apply-added tunnels can run, and so a future
+			// `up <name>` user can add a tunnel by editing tunnels.toml.
+			// Block on ctx so we still return when the user Ctrl+C's.
+			<-ctx.Done()
+			m.waitAllHandles()
+			return nil
+		}
+	}
+}
+
+// spawnHandle wires up the per-tunnel context + done channel and
+// launches the goroutine that drives Start/StartWithReconnect.
+//
+// errCh is optional; nil means "errors are advisory, only emit events."
+// Apply uses errCh=nil for tunnels added via hot-reload.
+//
+// Caller MUST hold m.mu when invoking, OR ensure the handle is not yet
+// stored in m.handles. spawnHandle takes the lock itself to insert.
+func (m *Manager) spawnHandle(parent context.Context, h *tunnelHandle, wg *sync.WaitGroup, errCh chan<- error) {
+	hCtx, cancel := context.WithCancel(parent)
+	h.cancel = cancel
+	h.done = make(chan struct{})
+
+	started := make(chan struct{})
+	startDone := make(chan error, 1)
+	go func() {
+		if m.reconnect {
+			startDone <- h.tunnel.StartWithReconnect(hCtx, started)
+			return
+		}
+		startDone <- h.tunnel.Start(hCtx, started)
+	}()
+
+	go func() {
+		defer close(h.done)
+		if wg != nil {
+			defer wg.Done()
+		}
+		// Stage 1: wait for "started" (Up event) or early failure.
+		select {
+		case <-started:
+			m.subs.publish(Event{
+				Type:       EventTunnelState,
+				TunnelName: h.tunnel.Name(),
+				Timestamp:  time.Now().UTC(),
+				Status:     tunnel.StatusUp,
+			})
+		case err := <-startDone:
+			m.subs.publish(Event{
+				Type:       EventTunnelState,
+				TunnelName: h.tunnel.Name(),
+				Timestamp:  time.Now().UTC(),
+				Status:     tunnel.StatusDown,
+				Message:    errMessage(err),
+			})
+			if errCh != nil && err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}
+			return
+		}
+		// Stage 2: wait for the tunnel to actually finish.
+		err := <-startDone
+		m.subs.publish(Event{
+			Type:       EventTunnelState,
+			TunnelName: h.tunnel.Name(),
+			Timestamp:  time.Now().UTC(),
+			Status:     tunnel.StatusDown,
+			Message:    errMessage(err),
 		})
+		if errCh != nil && err != nil {
+			select {
+			case errCh <- err:
+			default:
+				// errCh full: a prior error already won the race; this
+				// one is dropped. The event stream still carries it.
+			}
+		}
+	}()
+}
+
+// waitAllHandles blocks until every currently-tracked handle's
+// goroutine has signalled done. Used during shutdown.
+func (m *Manager) waitAllHandles() {
+	m.mu.Lock()
+	dones := make([]chan struct{}, 0, len(m.handles))
+	for _, h := range m.handles {
+		if h.done != nil {
+			dones = append(dones, h.done)
+		}
 	}
-	if err := g.Wait(); err != nil && outerCtx.Err() == nil {
-		return err
+	m.mu.Unlock()
+	for _, d := range dones {
+		<-d
 	}
-	return nil
 }
 
 // metricsTickInterval determines how often Manager emits an EventMetrics
@@ -132,7 +300,13 @@ func (m *Manager) startMetricsTicker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case now := <-t.C:
-				for _, tun := range m.tunnels {
+				m.mu.Lock()
+				tuns := make([]*tunnel.Tunnel, 0, len(m.handles))
+				for _, h := range m.handles {
+					tuns = append(tuns, h.tunnel)
+				}
+				m.mu.Unlock()
+				for _, tun := range tuns {
 					if tun.Status() != tunnel.StatusUp {
 						continue
 					}
@@ -153,52 +327,6 @@ func (m *Manager) startMetricsTicker(ctx context.Context) {
 			}
 		}
 	}()
-}
-
-func (m *Manager) runOne(ctx context.Context, t *tunnel.Tunnel) error {
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		if m.reconnect {
-			done <- t.StartWithReconnect(ctx, started)
-			return
-		}
-		done <- t.Start(ctx, started)
-	}()
-
-	// Wait for either started (listener accepting) or done (Start
-	// returned an error before signalling started, e.g. dial or listen
-	// failure). Without this select, a goroutine waiting on <-started
-	// would block forever if Start fails before closing it, deadlocking
-	// Run for the lifetime of the process.
-	select {
-	case <-started:
-		m.subs.publish(Event{
-			Type:       EventTunnelState,
-			TunnelName: t.Name(),
-			Timestamp:  time.Now().UTC(),
-			Status:     tunnel.StatusUp,
-		})
-	case err := <-done:
-		m.subs.publish(Event{
-			Type:       EventTunnelState,
-			TunnelName: t.Name(),
-			Timestamp:  time.Now().UTC(),
-			Status:     tunnel.StatusDown,
-			Message:    errMessage(err),
-		})
-		return err
-	}
-
-	err := <-done
-	m.subs.publish(Event{
-		Type:       EventTunnelState,
-		TunnelName: t.Name(),
-		Timestamp:  time.Now().UTC(),
-		Status:     tunnel.StatusDown,
-		Message:    errMessage(err),
-	})
-	return err
 }
 
 // errMessage returns "" for nil, otherwise the error's string form,

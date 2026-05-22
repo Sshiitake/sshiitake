@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -283,4 +284,122 @@ func TestExitCode_keyMismatch(t *testing.T) {
 func TestExitCode_hostNotKnown(t *testing.T) {
 	err := fmt.Errorf("some prefix: %w", ErrHostNotInKnownHosts)
 	assert.Equal(t, 2, classifyError(err))
+}
+
+// TestUp_hotReloadAddsTunnel: bring up `ssht up echo1`, edit tunnels.toml
+// to ADD echo2, and verify that the human-stream output reports echo2
+// coming up without restarting the process.
+func TestUp_hotReloadAddsTunnel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e in short mode")
+	}
+
+	sshAddr, hostKey := newInProcSSHServer(t)
+	host, port := splitHostPortHelper(t, sshAddr)
+
+	echo1 := startEchoServer(t)
+	echo2 := startEchoServer(t)
+
+	dir := t.TempDir()
+	cfgPath := dir + "/tunnels.toml"
+
+	initialTOML := fmt.Sprintf(`
+[tunnels.echo1]
+host = "%s"
+type = "local"
+local_port = 0
+remote_host = "%s"
+remote_port = %s
+`, host, echoHost(echo1), echoPort(echo1))
+	require.NoError(t, os.WriteFile(cfgPath, []byte(initialTOML), 0o600))
+
+	sshCfgPath := dir + "/ssh_config"
+	require.NoError(t, os.WriteFile(sshCfgPath, []byte(fmt.Sprintf(`
+Host %s
+    HostName %s
+    Port %d
+    User tester
+`, host, host, port)), 0o600))
+
+	t.Setenv("SSHT_TEST_HOSTKEY", base64HostKey(hostKey))
+
+	// concurrentBuffer is io.Writer-safe under concurrent writes;
+	// bytes.Buffer is not, and ssht's logger + reload goroutine + main
+	// goroutine all write to stdout.
+	var stdout concurrentBuffer
+
+	cmd := rootCmd()
+	cmd.SetOut(&stdout)
+	// --no-tui to force the human-stream path (otherwise even a
+	// bytes.Buffer falls back to human stream because isStdoutTTY
+	// returns false; but being explicit documents intent).
+	cmd.SetArgs([]string{
+		"up", "echo1",
+		"--config", cfgPath,
+		"--ssh-config", sshCfgPath,
+		"--no-tui",
+		"--no-reconnect",
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- cmd.ExecuteContext(ctx) }()
+
+	// Wait for echo1 to come up via stdout.
+	require.Eventually(t, func() bool {
+		return bytesContains(stdout.Bytes(), []byte(`tunnel "echo1" up`))
+	}, 8*time.Second, 50*time.Millisecond, "echo1 never came up")
+
+	// Now ADD echo2 by rewriting the config file. Use atomic-write
+	// so we exercise the same path appendTunnel uses.
+	newTOML := initialTOML + fmt.Sprintf(`
+[tunnels.echo2]
+host = "%s"
+type = "local"
+local_port = 0
+remote_host = "%s"
+remote_port = %s
+`, host, echoHost(echo2), echoPort(echo2))
+	tmpPath := cfgPath + ".tmp"
+	require.NoError(t, os.WriteFile(tmpPath, []byte(newTOML), 0o600))
+	require.NoError(t, os.Rename(tmpPath, cfgPath))
+
+	// Reload should pick up the change and bring echo2 up.
+	require.Eventually(t, func() bool {
+		return bytesContains(stdout.Bytes(), []byte(`tunnel "echo2" up`))
+	}, 8*time.Second, 50*time.Millisecond, "echo2 never came up via hot reload")
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("up did not exit on context cancel")
+	}
+}
+
+// concurrentBuffer is a thread-safe write target for cobra's stdout
+// when multiple goroutines (main, reload, manager) emit lines.
+type concurrentBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *concurrentBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *concurrentBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// Return a copy so the caller can hold it past the next write.
+	out := make([]byte, b.buf.Len())
+	copy(out, b.buf.Bytes())
+	return out
+}
+
+func bytesContains(haystack, needle []byte) bool {
+	return bytes.Contains(haystack, needle)
 }
