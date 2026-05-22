@@ -15,8 +15,15 @@ The pitch in one sentence: **define your forwards once, see at a glance which ar
 - **Phase 1 shipped (2026-05-17):** single tunnel via `ssht up <name>`, TOML config, in-process SSH, CI matrix.
 - **Phase 1.5 shipped (2026-05-18):** real `~/.ssh/known_hosts` verification, `ErrKeyMismatch` / `ErrHostNotInKnownHosts` sentinels.
 - **Phase 2 shipped (2026-05-22):** manager-driven multi-tunnel orchestration, group selectors, per-tunnel metrics (bytes-in/out + latency ring), per-tunnel log ring, `ssht up --bare` newline-delimited JSON event stream, and non-loopback `local_host` rejection at validate time. Phase 2 details live in `docs/plans/2026-05-18-phase-2-manager.md` and `CHANGELOG.md`.
+- **Phase 3 shipped (2026-05-22):** `internal/tui` Bubble Tea TUI (list, detail, help with ASCII tunnel-type diagrams, sparkline latency, three themes), TUI-by-default on TTY with `--no-tui` opt-out, `--theme` flag, and `ssht add` interactive wizard. Phase 3 details live in `docs/plans/2026-05-22-phase-3-tui.md` and `CHANGELOG.md`.
 
-Phase 2 limitations (planned for Phase 3+): no Bubble Tea TUI, no `fsnotify` hot-reload of config, no subprocess SSH fallback, no auto-reconnect when a tunnel drops.
+Phase 3 limitations (planned for Phase 4+):
+
+- No `fsnotify` hot-reload of `tunnels.toml`. Editing the file still requires restarting `ssht up`.
+- No subprocess `ssh` fallback. `golang.org/x/crypto/ssh` handles every tunnel; exotic config options that the native library doesn't support (`ProxyCommand`, certain `Match` blocks) are unsupported.
+- No auto-reconnect (planned for v1.1). When a tunnel drops it stays down until you restart.
+- The `ssht add` wizard does not auto-suggest hosts from `~/.ssh/config` yet.
+- The TUI's detail view does not yet read from `internal/logbuffer`; the per-tunnel log buffer is populated but not surfaced in the detail panel.
 
 ## Motivation
 

@@ -3,6 +3,29 @@
 All notable changes to sshiitake by phase. Pre-1.0 versions follow the
 phased plan in `docs/design/`.
 
+## Phase 3 - 2026-05-22
+
+### Added
+- `internal/tui` package: Bubble Tea TUI with list view, detail view,
+  help overlay, ASCII tunnel-type diagrams (local / remote / dynamic),
+  sparkline-rendered latency history, three themes (dark, light,
+  high-contrast).
+- CLI: TUI is the default when stdout is a TTY. `--no-tui` opts back
+  to the human stream. `--theme` selects the palette
+  (dark / light / high-contrast).
+- CLI: `ssht add` interactive wizard (huh-based) appends new tunnels
+  to `tunnels.toml` without hand-editing. Refuses to overwrite an
+  existing tunnel name.
+- Dependencies: `github.com/charmbracelet/bubbletea`,
+  `github.com/charmbracelet/lipgloss`, `github.com/charmbracelet/bubbles`,
+  `github.com/charmbracelet/huh`, `github.com/mattn/go-isatty`.
+
+### Known limitations (deferred to Phase 4+)
+- No `fsnotify` hot-reload of `tunnels.toml`.
+- No subprocess SSH fallback.
+- No auto-reconnect (v1.1).
+- Wizard does not auto-suggest hosts from `~/.ssh/config`.
+
 ## Phase 2 - 2026-05-22
 
 ### Added
