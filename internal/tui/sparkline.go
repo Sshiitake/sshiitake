@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"math"
 	"strings"
 
 	"github.com/Sshiitake/sshiitake/internal/metrics"
@@ -48,6 +49,11 @@ func RenderSparkline(samples []metrics.Sample, width int) string {
 }
 
 func blockFor(value, minV, maxV float64) rune {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		// Defensive: nothing upstream produces NaN/Inf today, but the
+		// sparkline must never panic or silently map them to a block.
+		return ' '
+	}
 	if maxV == minV {
 		// All values equal: pick the middle block.
 		return blockChars[3]

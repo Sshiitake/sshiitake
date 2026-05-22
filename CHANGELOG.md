@@ -3,6 +3,56 @@
 All notable changes to sshiitake by phase. Pre-1.0 versions follow the
 phased plan in `docs/design/`.
 
+## Phase 4 / v1.0 release - 2026-05-22
+
+### Added
+- Auto-reconnect with exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s,
+  60s (capped), 10% jitter, 10 attempts max. Reconnectable error tokens
+  cover EOF, connection reset, handshake failure, timeout, broken pipe,
+  no route to host, network unreachable. Permanent errors (host-key
+  mismatch, unsupported config options, no usable auth) skip the loop.
+  Enabled by default; `--no-reconnect` opts out.
+- Hot-reload of `tunnels.toml` via `fsnotify`. Debounced 200ms. The
+  watcher diffs old vs new config and applies an Added/Removed/Modified
+  plan to the running Manager without disturbing unchanged tunnels.
+  Invalid edits are logged to stderr with a `[reload]` prefix; running
+  tunnels are not torn down. `--no-reload` opts out.
+- `Manager.Apply` per-tunnel start/stop API used by hot-reload and the
+  new TUI toggle binding.
+- `Manager.Toggle(name)` cancels or restarts a single tunnel.
+- TUI space-to-toggle: pressing space on a selected row starts or stops
+  the underlying tunnel. The TUI dispatches to `Manager.Toggle` off the
+  Bubble Tea event loop so the UI stays responsive while a cancel is
+  waiting for its goroutine to exit.
+- `ARCHITECTURE.md` (package map, event flow, invariants, "adding a new
+  event type" walkthrough).
+- `CONTRIBUTING.md` (setup, code style, PR conventions, security-report
+  guidance).
+
+### Changed
+- `ssht add` now writes atomically (`CreateTemp` + `Rename`). Crash
+  between truncate and complete write no longer leaves an empty
+  `tunnels.toml`.
+- `keyAuth` refuses private keys with permissions broader than 0600,
+  matching OpenSSH's stricture.
+- `keyAuth` error no longer leaks the full key path; the error is
+  simply "parse private key: <reason>".
+- `buildAuth` returns a wrapped error when at least one auth source was
+  attempted and every attempt failed. Silent empty stays when nothing
+  was configured.
+- Sparkline `blockFor` handles `NaN` / `+Inf` / `-Inf` without panic
+  (collapses to space rune).
+- Config validator gains port boundary cases (1, 65535, 65536, 0, -1).
+
+### Known limitations (v1.0)
+- Subprocess SSH fallback is deferred to a future minor release. Until
+  then, tunnels whose ssh_config requires `ProxyCommand`, exotic
+  `Match` blocks, or `ControlMaster yes` are not supported.
+- Auto-reconnect is unit-tested for backoff arithmetic and error
+  classification but not end-to-end against a real SSH server restart.
+  Full Start/drop/reconnect integration coverage is targeted for a
+  future release.
+
 ## Phase 3 - 2026-05-22
 
 ### Added

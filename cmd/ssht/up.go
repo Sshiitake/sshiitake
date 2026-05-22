@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Sshiitake/sshiitake/internal/config"
 	"github.com/Sshiitake/sshiitake/internal/manager"
+	"github.com/Sshiitake/sshiitake/internal/reload"
 	"github.com/Sshiitake/sshiitake/internal/tui"
 	"github.com/Sshiitake/sshiitake/internal/tunnel"
 )
@@ -23,6 +25,8 @@ func upCmd() *cobra.Command {
 		listenFile     string
 		bare           bool
 		noTUI          bool
+		noReconnect    bool
+		noReload       bool
 		theme          string
 	)
 	cmd := &cobra.Command{
@@ -46,6 +50,7 @@ func upCmd() *cobra.Command {
 			m, err := manager.New(cfg, sshCfgPath, manager.Options{
 				Selectors:       args,
 				HostKeyCallback: hostKeyCB,
+				Reconnect:       !noReconnect,
 			})
 			if err != nil {
 				return err
@@ -59,6 +64,13 @@ func upCmd() *cobra.Command {
 
 			runErr := make(chan error, 1)
 			go func() { runErr <- m.Run(ctx) }()
+
+			// Hot-reload watcher: re-loads tunnels.toml on edit and
+			// applies the diff. Errors are logged to stderr but never
+			// interrupt the running tunnels.
+			if !noReload {
+				startReloadWatcher(ctx, cmd, cfgPath, sshCfgPath, cfg, m)
+			}
 
 			if bare {
 				defer m.Unsubscribe(eventCh)
@@ -95,8 +107,59 @@ func upCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("listen-file")
 	cmd.Flags().BoolVar(&bare, "bare", false, "stream newline-delimited JSON events to stdout; no human-friendly output")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "disable the TUI even when stdout is a TTY; stream human-friendly events instead")
+	cmd.Flags().BoolVar(&noReconnect, "no-reconnect", false, "do not auto-reconnect tunnels that drop")
+	cmd.Flags().BoolVar(&noReload, "no-reload", false, "do not watch tunnels.toml for hot-reload")
 	cmd.Flags().StringVar(&theme, "theme", tui.DefaultThemeName, "TUI theme: dark, light, or high-contrast")
 	return cmd
+}
+
+// startReloadWatcher launches a goroutine that watches cfgPath for
+// changes and, on each debounced write, reloads tunnels.toml and
+// applies the diff to the running Manager.
+//
+// Errors during reload (invalid TOML, validation failure, partial Apply
+// failure) are written to stderr with a [reload] prefix; the running
+// tunnels are never torn down because of a bad edit. The user can then
+// fix the file and the next save reapplies.
+func startReloadWatcher(ctx context.Context, cmd *cobra.Command, cfgPath, sshCfgPath string, initialCfg *config.Config, m *manager.Manager) {
+	w, err := reload.New(cfgPath, reload.DefaultDebounce)
+	if err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[reload] watcher disabled: %v\n", err)
+		return
+	}
+	go func() { _ = w.Run(ctx) }()
+	go func() {
+		current := initialCfg
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-w.Changed:
+				newCfg, err := config.Load(cfgPath)
+				if err != nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[reload] load failed: %v\n", err)
+					continue
+				}
+				if err := newCfg.Validate(); err != nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[reload] validate failed: %v\n", err)
+					continue
+				}
+				plan := reload.Diff(current, newCfg)
+				if plan.Empty() {
+					continue
+				}
+				if err := m.Apply(newCfg, plan); err != nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[reload] apply failed: %v\n", err)
+					// Even on partial failure we adopt newCfg as the
+					// reference for the next diff: handles that
+					// succeeded are now part of the live set, and
+					// re-trying the same edit twice would otherwise
+					// keep emitting the same error.
+				}
+				current = newCfg
+			}
+		}
+	}()
 }
 
 // streamHumanEvents prints state changes to the user until ctx is done

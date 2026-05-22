@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,6 +58,15 @@ type Options struct {
 	// DialTimeout is the maximum time for the initial TCP+SSH handshake.
 	// If zero, defaults to 10s.
 	DialTimeout time.Duration
+
+	// Reconnect enables auto-reconnect with exponential backoff: when
+	// Start returns due to a transient SSH error, StartWithReconnect
+	// will retry up to Backoff.MaxAttempts times.
+	Reconnect bool
+
+	// Backoff configures the reconnect schedule. Zero-value receives
+	// sane defaults (1s..60s, 10% jitter, 10 attempts).
+	Backoff BackoffOptions
 }
 
 // Tunnel represents a single configured tunnel. Construct with New,
@@ -170,6 +180,62 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 	return nil
 }
 
+// StartWithReconnect wraps Start with an exponential-backoff retry
+// loop. Transient SSH errors (EOF, connection reset, handshake
+// failures, timeouts) trigger a retry; permanent errors (host-key
+// mismatch, unsupported config options, no usable auth) short-circuit
+// and surface immediately.
+//
+// The first attempt receives the supplied started channel; subsequent
+// attempts pass nil so callers see exactly one "up" signal across the
+// reconnect lifecycle.
+//
+// When t.opts.Reconnect is false this is a thin pass-through to Start.
+func (t *Tunnel) StartWithReconnect(ctx context.Context, started chan<- struct{}) error {
+	if !t.opts.Reconnect {
+		return t.Start(ctx, started)
+	}
+
+	// Production default: 10% jitter when caller left it at zero. Tests
+	// drive newBackoff directly with Jitter=0 for deterministic
+	// progression assertions, so the default lives here at the
+	// public-API boundary rather than in applyDefaults.
+	bo := t.opts.Backoff
+	if bo.Jitter == 0 {
+		bo.Jitter = 0.1
+	}
+	b := newBackoff(bo)
+	// applyDefaults runs inside newBackoff against a copy; pull the
+	// resolved MaxAttempts back out so the bound below matches.
+	maxAttempts := b.opts.MaxAttempts
+
+	attempts := 0
+	notify := started
+	for {
+		attempts++
+		err := t.Start(ctx, notify)
+		notify = nil // subsequent loops do not re-signal "up".
+
+		if ctx.Err() != nil {
+			return nil
+		}
+		if !isReconnectableError(err) {
+			return err
+		}
+		if attempts >= maxAttempts {
+			return fmt.Errorf("tunnel %q: gave up after %d attempts: %w", t.rt.Name, attempts, err)
+		}
+
+		t.setStatus(StatusConnecting)
+		delay := b.next()
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
 // dial opens an SSH client connection. The caller owns the returned
 // client and must Close() it.
 func (t *Tunnel) dial(ctx context.Context) (*ssh.Client, error) {
@@ -215,43 +281,69 @@ func (t *Tunnel) dial(ctx context.Context) (*ssh.Client, error) {
 // buildAuth returns the SSH auth methods to attempt and, if an
 // ssh-agent socket was successfully opened, the underlying net.Conn so
 // the caller can Close it once the handshake completes.
+//
+// Returns an error when at least one auth source was attempted AND
+// every attempt failed. Silent empty when nothing was configured (the
+// test-server NoClientAuth path relies on this).
 func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, net.Conn, error) {
 	var methods []ssh.AuthMethod
 	var agentConn net.Conn
+	var attempted bool
+	var firstErr error
 
 	// Try ssh-agent if SSH_AUTH_SOCK is set.
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		if conn, err := net.Dial("unix", sock); err == nil {
+		attempted = true
+		conn, err := net.Dial("unix", sock)
+		if err == nil {
 			ac := agent.NewClient(conn)
 			methods = append(methods, ssh.PublicKeysCallback(ac.Signers))
 			agentConn = conn
+		} else if firstErr == nil {
+			// Strip the socket path from the OS error to avoid leaking
+			// it into --bare JSON event streams and shared logs.
+			firstErr = fmt.Errorf("ssh-agent: %s", classifyAgentDialError(err))
 		}
 	}
 
 	// Try the configured IdentityFile.
 	if t.rt.IdentityFile != "" {
+		attempted = true
 		if keyMethod, err := keyAuth(t.rt.IdentityFile); err == nil {
 			methods = append(methods, keyMethod)
+		} else if firstErr == nil {
+			firstErr = err
 		}
 	}
 
+	if attempted && len(methods) == 0 {
+		return nil, nil, fmt.Errorf("no usable auth methods: %w", firstErr)
+	}
 	// Test servers use NoClientAuth; clients sending an empty Auth list
 	// are accepted in that case.
 	return methods, agentConn, nil
 }
 
 // keyAuth reads a private key from disk and returns it as an AuthMethod.
+// Refuses keys with permissions broader than 0600 (matches OpenSSH).
 func keyAuth(path string) (ssh.AuthMethod, error) {
 	if expanded, err := expandHome(path); err == nil {
 		path = expanded
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat private key: %w", err)
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		return nil, fmt.Errorf("private key permissions too open (%04o); want 0600 or stricter", mode)
+	}
 	pem, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read private key: %w", err)
 	}
 	signer, err := ssh.ParsePrivateKey(pem)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("parse private key: %w", err)
 	}
 	return ssh.PublicKeys(signer), nil
 }
@@ -265,4 +357,25 @@ func expandHome(p string) (string, error) {
 		return "", err
 	}
 	return home + p[1:], nil
+}
+
+// classifyAgentDialError returns a short category string for a
+// unix-socket dial failure, hiding the socket path. Used by buildAuth
+// so SSH_AUTH_SOCK never leaks into --bare JSON event streams or
+// shared logs.
+func classifyAgentDialError(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "no such file"):
+		return "socket not found"
+	case strings.Contains(msg, "connection refused"):
+		return "agent not listening"
+	case strings.Contains(msg, "permission denied"):
+		return "permission denied"
+	default:
+		return "connect failed"
+	}
 }

@@ -1,6 +1,6 @@
 # Sshiitake: TUI SSH Tunnel Manager
 
-**Status:** Active (Phase 1, 1.5, 2, 3 shipped; Phase 4 next)
+**Status:** v1.0 released (Phase 1, 1.5, 2, 3, 4 shipped)
 **Date:** 2026-05-17
 **Author:** Adam Neilson
 
@@ -16,14 +16,20 @@ The pitch in one sentence: **define your forwards once, see at a glance which ar
 - **Phase 1.5 shipped (2026-05-18):** real `~/.ssh/known_hosts` verification, `ErrKeyMismatch` / `ErrHostNotInKnownHosts` sentinels.
 - **Phase 2 shipped (2026-05-22):** manager-driven multi-tunnel orchestration, group selectors, per-tunnel metrics (bytes-in/out + latency ring), per-tunnel log ring, `ssht up --bare` newline-delimited JSON event stream, and non-loopback `local_host` rejection at validate time. Phase 2 details live in `docs/plans/2026-05-18-phase-2-manager.md` and `CHANGELOG.md`.
 - **Phase 3 shipped (2026-05-22):** `internal/tui` Bubble Tea TUI (list, detail, help with ASCII tunnel-type diagrams, sparkline latency, three themes), TUI-by-default on TTY with `--no-tui` opt-out, `--theme` flag, and `ssht add` interactive wizard. Phase 3 details live in `docs/plans/2026-05-22-phase-3-tui.md` and `CHANGELOG.md`.
+- **Phase 4 / v1.0 shipped (2026-05-22):** auto-reconnect with exponential backoff (pulled forward from the original v1.1 plan), `fsnotify` hot-reload of `tunnels.toml` via `internal/reload` + `Manager.Apply`, space-to-toggle in the TUI via `Manager.Toggle`, issue #1 auth-UX cluster, atomic write in `ssht add`, sparkline NaN guard, port-boundary validator tests, plus `ARCHITECTURE.md` and `CONTRIBUTING.md`. Phase 4 details live in `docs/plans/2026-05-22-phase-4-polish.md` and `CHANGELOG.md`.
 
-Phase 3 limitations (planned for Phase 4+):
+### v1.0 limitations (deferred)
 
-- No `fsnotify` hot-reload of `tunnels.toml`. Editing the file still requires restarting `ssht up`.
-- No subprocess `ssh` fallback. `golang.org/x/crypto/ssh` handles every tunnel; exotic config options that the native library doesn't support (`ProxyCommand`, certain `Match` blocks) are unsupported.
-- No auto-reconnect (planned for v1.1). When a tunnel drops it stays down until you restart.
-- The `ssht add` wizard does not auto-suggest hosts from `~/.ssh/config` yet.
-- The TUI's detail view does not yet read from `internal/logbuffer`; the per-tunnel log buffer is populated but not surfaced in the detail panel.
+- **Subprocess SSH fallback** is deferred to a future minor release.
+  `golang.org/x/crypto/ssh` handles every tunnel today; ssh_config that
+  requires `ProxyCommand`, exotic `Match` blocks, or `ControlMaster yes`
+  is not supported. The fallback design lives in
+  `docs/plans/2026-05-22-phase-4-polish.md` (Task 6) as the staging
+  ground for a Phase 4.5 / v1.1 batch.
+- The `ssht add` wizard does not auto-suggest hosts from `~/.ssh/config`.
+- The TUI's detail view does not yet read from `internal/logbuffer`;
+  the per-tunnel log buffer is populated but not surfaced in the detail
+  panel.
 
 ## Motivation
 
@@ -261,11 +267,10 @@ Pressed `enter` on a tunnel:
 - Theme support (built-in dark, light, high-contrast)
 - ASCII tunnel-type diagrams in help
 
-When a tunnel drops in v1 it stays down; the user gets a clear "down: <reason>" indicator and can press `space` to bring it back up. Auto-reconnect arrives in v1.1.
+**Auto-reconnect (shipped v1.0).** When a tunnel drops, the manager retries with exponential backoff (1s, 2s, 4s, 8s, 16s, 32s, 60s capped; 10% jitter; 10 attempts max). Permanent failures (host-key mismatch, unsupported config, no usable auth) short-circuit and surface immediately. `--no-reconnect` opts out for users who want the strict single-attempt semantics originally pencilled in for v1.
 
 ### v1.1
 
-- **Auto-reconnect** with exponential backoff + jitter. The "reconnecting" status (amber `◐` indicator in the mockup) lights up here, not in v1.
 - Network-change awareness on macOS and Linux: when the default route changes, tunnels in reconnect-backoff retry immediately.
 
 ### v1.5 (post-launch, prioritise by user feedback)
@@ -289,9 +294,9 @@ The five open questions in the original draft of this spec have been answered:
 
 1. **Licence: MIT.** Matches the rest of the TUI ecosystem and keeps packaging friction low.
 2. **Windows TTY: deferred indefinitely.** v1 targets macOS and Linux only. Windows support shows up in v1.5 if there's demand and a contributor willing to own the testing surface.
-3. **Auto-reconnect: not v1.** v1 ships without auto-reconnect to keep the initial surface small and the failure modes obvious. Reconnect logic lands in v1.1 with backoff, jitter, and network-change awareness.
+3. **Auto-reconnect: shipped in v1.0 (pulled forward from the original v1.1 plan).** Exponential backoff + jitter; permanent vs transient error classification in `internal/tunnel/reconnect.go`. Network-change awareness still lands in v1.1.
 4. **Hot-reload: yes.** The running process watches `tunnels.toml` via `fsnotify` and reloads on save. Pressing `e` opens `$EDITOR` at the relevant line; the diff applies on save without restarting tunnels that are unchanged.
-5. **In-process SSH with fallback.** Default to `golang.org/x/crypto/ssh` for full event-level control. Detect at parse time when a tunnel's resolved ssh config uses an option we don't natively support (`ProxyCommand`, exotic `Match` blocks, custom `KexAlgorithms`, `ControlMaster yes` from outside), and fall back to spawning `ssh` for that specific tunnel. Mixed-mode is fine; the manager doesn't care.
+5. **In-process SSH with fallback** (deferred to v1.1, see v1.0 limitations). Default to `golang.org/x/crypto/ssh` for full event-level control. Detect at parse time when a tunnel's resolved ssh config uses an option we don't natively support (`ProxyCommand`, exotic `Match` blocks, custom `KexAlgorithms`, `ControlMaster yes` from outside), and fall back to spawning `ssh` for that specific tunnel. Mixed-mode is fine; the manager doesn't care. v1.0 ships the in-process half only; the subprocess fallback is on the v1.1 backlog.
 
 ## Risks
 
@@ -301,14 +306,15 @@ The five open questions in the original draft of this spec have been answered:
 
 ## Success criteria
 
-v1:
+v1.0:
 1. A new user can install, define their first tunnel, and bring it up in under 5 minutes
 2. Running `ssht` on a config with 20 tunnels uses <50 MB RSS and <1% CPU when idle
 3. JSON status integrates with at least one status bar (SketchyBar) out of the box, documented
 4. Hot-reload applies a config change in under 500ms with no flicker for unchanged tunnels
-
-v1.1:
 5. Auto-reconnect recovers within 10 seconds of network restoration
 
+v1.1:
+6. Network-change awareness: tunnels in reconnect-backoff retry immediately when the default route changes
+
 Adoption:
-6. 500 GitHub stars within 6 months of v1 launch (vanity, but a useful signal of "are people interested?")
+7. 500 GitHub stars within 6 months of v1 launch (vanity, but a useful signal of "are people interested?")

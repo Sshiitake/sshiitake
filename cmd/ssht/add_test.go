@@ -91,6 +91,28 @@ func TestAppendTunnel_enforces0600OnExistingFile(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), stat.Mode().Perm())
 }
 
+// TestAppendTunnel_atomicWrite verifies that appendTunnel uses the
+// temp-and-rename pattern: after a successful append no stray
+// ".tunnels.toml.*" tempfile is left in the directory.
+func TestAppendTunnel_atomicWrite(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "tunnels.toml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`[tunnels.a]
+host = "h"
+type = "dynamic"
+local_port = 1080
+`), 0o600))
+
+	require.NoError(t, appendTunnel(cfgPath, "newone", config.Tunnel{
+		Host: "h2", Type: config.TypeDynamic, LocalPort: 1081,
+	}))
+
+	// Verify no .tunnels.toml.* tempfile remains.
+	matches, err := filepath.Glob(filepath.Join(dir, ".tunnels.toml.*"))
+	require.NoError(t, err)
+	assert.Empty(t, matches, "temp file should have been renamed away")
+}
+
 func TestAdd_serialisesValidTOML(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "tunnels.toml")
