@@ -38,6 +38,21 @@ func TestResolve_fallbackDefaults(t *testing.T) {
 	assert.Equal(t, 22, r.SSHPort)
 }
 
+// TestResolve_missingSSHConfigFallsBackToHostLiteral covers the CI
+// fallback path: when the configured ssh_config file doesn't exist
+// (common on fresh macOS GH runners), resolve treats t.Host as a
+// literal SSH hostname rather than erroring.
+func TestResolve_missingSSHConfigFallsBackToHostLiteral(t *testing.T) {
+	tun := Tunnel{
+		Host: "my-host", Type: TypeDynamic, LocalPort: 1080,
+	}
+	r, err := ResolveWithSSHConfig(tun, "/no/such/path")
+	require.NoError(t, err)
+	assert.Equal(t, "my-host", r.SSHHost)
+	assert.Equal(t, 22, r.SSHPort)
+	assert.Equal(t, "127.0.0.1", r.LocalHost)
+}
+
 func TestResolve_proxyJump(t *testing.T) {
 	tun := Tunnel{
 		Host: "api.internal", Type: TypeLocal, LocalPort: 8443,
