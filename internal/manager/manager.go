@@ -92,6 +92,8 @@ func (m *Manager) Unsubscribe(ch chan Event) { m.subs.Unsubscribe(ch) }
 func (m *Manager) Run(ctx context.Context) error {
 	defer m.subs.closeAll()
 
+	m.startMetricsTicker(ctx)
+
 	g, ctx := errgroup.WithContext(ctx)
 	for _, t := range m.tunnels {
 		t := t // capture
@@ -103,6 +105,43 @@ func (m *Manager) Run(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// metricsTickInterval determines how often Manager emits an EventMetrics
+// snapshot per tunnel. 1s is conservative; the TUI sparkline needs at
+// most one sample per second at the 60-cell width.
+const metricsTickInterval = time.Second
+
+func (m *Manager) startMetricsTicker(ctx context.Context) {
+	go func() {
+		t := time.NewTicker(metricsTickInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-t.C:
+				for _, tun := range m.tunnels {
+					if tun.Status() != tunnel.StatusUp {
+						continue
+					}
+					in, out := tun.Metrics().Bytes()
+					var lat float64
+					if snap := tun.Metrics().LatencySnapshot(); len(snap) > 0 {
+						lat = snap[len(snap)-1].Value
+					}
+					m.subs.publish(Event{
+						Type:       EventMetrics,
+						TunnelName: tun.Name(),
+						Timestamp:  now.UTC(),
+						BytesIn:    in,
+						BytesOut:   out,
+						LatencyMs:  lat,
+					})
+				}
+			}
+		}
+	}()
 }
 
 func (m *Manager) runOne(ctx context.Context, t *tunnel.Tunnel) error {

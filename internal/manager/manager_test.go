@@ -116,3 +116,67 @@ func TestRun_multipleTunnelsStartConcurrently(t *testing.T) {
 		t.Fatal("manager did not stop")
 	}
 }
+
+func TestRun_emitsMetricsEvents(t *testing.T) {
+	sshAddr, hostKey := startTestSSHServer(t)
+	echo := startEchoServer(t)
+	host, port := splitHostPort(t, sshAddr)
+	cfg := &config.Config{
+		Tunnels: map[string]config.Tunnel{
+			"e": {Host: host, Type: config.TypeLocal, LocalPort: 0,
+				RemoteHost: echoHost(echo), RemotePort: echoPort(echo)},
+		},
+	}
+	m, err := New(cfg, writeTempSSHConfig(t, host, port), Options{
+		HostKeyCallback: ssh.FixedHostKey(hostKey), HostKeyVerification: true,
+	})
+	require.NoError(t, err)
+
+	ch := m.Subscribe(64)
+	defer m.Unsubscribe(ch)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := make(chan error, 1)
+	go func() { runErr <- m.Run(ctx) }()
+
+	// Wait for Up.
+	requireEventEventually(t, ch, EventTunnelState, tunnel.StatusUp, 3*time.Second)
+
+	// Push traffic so metrics actually have something to report.
+	c, err := net.Dial("tcp", m.Tunnels()[0].LocalAddr())
+	require.NoError(t, err)
+	_, _ = c.Write(make([]byte, 1024))
+	buf := make([]byte, 1024)
+	_, _ = io.ReadFull(c, buf)
+	_ = c.Close()
+
+	// Expect at least one EventMetrics within a reasonable window.
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case e := <-ch:
+			if e.Type == EventMetrics && e.BytesIn > 0 {
+				cancel()
+				<-runErr
+				return
+			}
+		case <-deadline:
+			t.Fatal("no EventMetrics with bytes received")
+		}
+	}
+}
+
+func requireEventEventually(t *testing.T, ch chan Event, et EventType, st tunnel.Status, dur time.Duration) {
+	t.Helper()
+	deadline := time.After(dur)
+	for {
+		select {
+		case e := <-ch:
+			if e.Type == et && e.Status == st {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("did not see %v / %v", et, st)
+		}
+	}
+}
