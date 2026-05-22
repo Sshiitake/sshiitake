@@ -123,6 +123,10 @@ func atoi(s string) int {
 // appendTunnel reads tunnels.toml, adds the named tunnel, and writes
 // it back. Refuses to overwrite an existing name. If path doesn't
 // exist, starts from an empty config.
+//
+// Writes are atomic at the directory level: the new content lands in
+// a sibling temp file with 0600 perms and is then renamed over the
+// target. A crash mid-write leaves the original file untouched.
 func appendTunnel(path, name string, t config.Tunnel) error {
 	cfg, err := loadOrEmpty(path)
 	if err != nil {
@@ -140,16 +144,33 @@ func appendTunnel(path, name string, t config.Tunnel) error {
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
 		return fmt.Errorf("encode: %w", err)
 	}
+
 	// Ensure parent directory exists.
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir parent: %w", err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
-		return err
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tunnels.toml.*")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
 	}
-	// Enforce 0600 even on pre-existing files (WriteFile's perm only
-	// applies at file-create time).
-	return os.Chmod(path, 0o600)
+	tmpPath := tmp.Name()
+	// Safe if already renamed away: Remove on a non-existent path is a
+	// no-op we deliberately swallow.
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod temp: %w", err)
+	}
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp: %w", err)
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // loadOrEmpty returns config.Load(path), or an empty *Config if path

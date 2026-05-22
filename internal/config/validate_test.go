@@ -103,6 +103,38 @@ func TestValidate_localPortZeroOK(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 }
 
+// TestValidate_portBoundaries exercises the port-range edges flagged
+// in the Phase 1 review as missing coverage: 1 and 65535 (legal),
+// 65536 and negatives (illegal), plus the special-case 0 (local-only,
+// "auto-pick" for the listener).
+func TestValidate_portBoundaries(t *testing.T) {
+	tests := []struct {
+		local, remote int
+		wantOK        bool
+	}{
+		{1, 1, true},
+		{65535, 65535, true},
+		{0, 80, true}, // 0 = auto-pick for local
+		{1, 65536, false},
+		{1, 0, false}, // remote can't be 0
+		{65536, 80, false},
+		{-1, 80, false},
+		{1, -1, false},
+	}
+	for _, tc := range tests {
+		cfg := &Config{Tunnels: map[string]Tunnel{
+			"x": {Host: "h", Type: TypeLocal, LocalHost: "127.0.0.1",
+				LocalPort: tc.local, RemoteHost: "r", RemotePort: tc.remote},
+		}}
+		err := cfg.Validate()
+		if tc.wantOK {
+			assert.NoError(t, err, "local=%d remote=%d", tc.local, tc.remote)
+		} else {
+			assert.Error(t, err, "local=%d remote=%d", tc.local, tc.remote)
+		}
+	}
+}
+
 func TestValidate_groupReferenceUnknown(t *testing.T) {
 	cfg := &Config{
 		Tunnels: map[string]Tunnel{
