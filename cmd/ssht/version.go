@@ -20,6 +20,7 @@ bring them up with ` + "`ssht up <name>`" + `.`,
 	root.AddCommand(versionCmd())
 	root.AddCommand(configCmd())
 	root.AddCommand(upCmd())
+	root.AddCommand(addCmd())
 	return root
 }
 
