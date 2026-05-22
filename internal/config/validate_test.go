@@ -56,6 +56,41 @@ func TestValidate_dynamicNeedsOnlyLocalPort(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 }
 
+func TestValidate_localHostLoopbackOK(t *testing.T) {
+	cfg := &Config{Tunnels: map[string]Tunnel{
+		"x": {Host: "h", Type: TypeLocal, LocalHost: "127.0.0.1",
+			LocalPort: 1234, RemoteHost: "r", RemotePort: 80},
+	}}
+	require.NoError(t, cfg.Validate())
+}
+
+func TestValidate_localHostNonLoopbackRejected(t *testing.T) {
+	cfg := &Config{Tunnels: map[string]Tunnel{
+		"x": {Host: "h", Type: TypeLocal, LocalHost: "0.0.0.0",
+			LocalPort: 1234, RemoteHost: "r", RemotePort: 80},
+	}}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "local_host")
+	assert.ErrorContains(t, err, "0.0.0.0")
+}
+
+func TestValidate_localHostIPv6LoopbackOK(t *testing.T) {
+	cfg := &Config{Tunnels: map[string]Tunnel{
+		"x": {Host: "h", Type: TypeLocal, LocalHost: "::1",
+			LocalPort: 1234, RemoteHost: "r", RemotePort: 80},
+	}}
+	require.NoError(t, cfg.Validate())
+}
+
+func TestValidate_localHostExternalRejected(t *testing.T) {
+	cfg := &Config{Tunnels: map[string]Tunnel{
+		"x": {Host: "h", Type: TypeLocal, LocalHost: "192.168.1.50",
+			LocalPort: 1234, RemoteHost: "r", RemotePort: 80},
+	}}
+	require.Error(t, cfg.Validate())
+}
+
 func TestValidate_groupReferenceUnknown(t *testing.T) {
 	cfg := &Config{
 		Tunnels: map[string]Tunnel{
