@@ -7,7 +7,6 @@
 package manager
 
 import (
-	"context"
 	"fmt"
 
 	"golang.org/x/crypto/ssh"
@@ -113,11 +112,3 @@ func resolveSelectors(cfg *config.Config, selectors []string) ([]string, error) 
 	}
 	return out, nil
 }
-
-// subscribers is wired in Task 8; stub here to keep the file compiling.
-type subscribers struct{}
-
-func newSubscribers() *subscribers { return &subscribers{} }
-
-// _ = context.Background  // satisfy import for now; removed when Start lands.
-var _ = context.Background
