@@ -105,6 +105,12 @@ func isReconnectableError(err error) bool {
 		"KEY MISMATCH",
 		"not in known_hosts",
 		"no usable auth methods",
+		// Server-side credential rejection. crypto/ssh surfaces these
+		// inside a "handshake failed" wrapper, so they must be matched
+		// BEFORE the transient "handshake" token below or we'd retry a
+		// credential failure ten times before giving up.
+		"unable to authenticate",
+		"no supported methods remain",
 	} {
 		if strings.Contains(msg, t) {
 			return false

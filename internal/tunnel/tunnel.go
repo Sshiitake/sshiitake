@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -299,7 +300,9 @@ func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, net.Conn, error) {
 			methods = append(methods, ssh.PublicKeysCallback(ac.Signers))
 			agentConn = conn
 		} else if firstErr == nil {
-			firstErr = fmt.Errorf("ssh-agent: %w", err)
+			// Strip the socket path from the OS error to avoid leaking
+			// it into --bare JSON event streams and shared logs.
+			firstErr = fmt.Errorf("ssh-agent: %s", classifyAgentDialError(err))
 		}
 	}
 
@@ -354,4 +357,25 @@ func expandHome(p string) (string, error) {
 		return "", err
 	}
 	return home + p[1:], nil
+}
+
+// classifyAgentDialError returns a short category string for a
+// unix-socket dial failure, hiding the socket path. Used by buildAuth
+// so SSH_AUTH_SOCK never leaks into --bare JSON event streams or
+// shared logs.
+func classifyAgentDialError(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "no such file"):
+		return "socket not found"
+	case strings.Contains(msg, "connection refused"):
+		return "agent not listening"
+	case strings.Contains(msg, "permission denied"):
+		return "permission denied"
+	default:
+		return "connect failed"
+	}
 }

@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -377,4 +378,69 @@ func TestApply_nilNewCfgErrors(t *testing.T) {
 	err = m.Apply(nil, reload.Plan{})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "newCfg is nil")
+}
+
+// TestApply_handleAlwaysHasDoneChan asserts the spawnHandle invariant:
+// every handle reachable through m.handles must have a non-nil done
+// channel and cancel func. A regression in the publish-before-init
+// ordering would surface here as a flaky false from
+// allHandlesFullyInitialised under -race.
+func TestApply_handleAlwaysHasDoneChan(t *testing.T) {
+	sshAddr, hostKey := startTestSSHServer(t)
+	echo := startEchoServer(t)
+	host, port := splitHostPort(t, sshAddr)
+	cfg := &config.Config{Tunnels: map[string]config.Tunnel{
+		"seed": {Host: host, Type: config.TypeLocal, LocalPort: 0,
+			RemoteHost: echoHost(echo), RemotePort: echoPort(echo)},
+	}}
+	m, err := New(cfg, writeTempSSHConfig(t, host, port), Options{
+		HostKeyCallback: ssh.FixedHostKey(hostKey),
+	})
+	require.NoError(t, err)
+	ch := m.Subscribe(64)
+	defer m.Unsubscribe(ch)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := newTunnelStateTracker(ctx, ch)
+	runErr := runManagerInBackground(t, m, ctx)
+
+	require.True(t, tracker.waitForStatus("seed", tunnel.StatusUp, 3*time.Second))
+
+	// Hammer Apply with a steady stream of add/remove plans while
+	// concurrently asserting the invariant. If a handle is ever
+	// published before initHandle ran, we'll observe done==nil here.
+	stop := make(chan struct{})
+	go func() {
+		i := 0
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			name := fmt.Sprintf("dyn%d", i)
+			i++
+			newCfg := &config.Config{Tunnels: map[string]config.Tunnel{
+				"seed": cfg.Tunnels["seed"],
+				name: {Host: host, Type: config.TypeLocal, LocalPort: 0,
+					RemoteHost: echoHost(echo), RemotePort: echoPort(echo)},
+			}}
+			_ = m.Apply(newCfg, reload.Plan{Added: []string{name}})
+		}
+	}()
+
+	deadline := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case <-deadline:
+			close(stop)
+			cancel()
+			<-runErr
+			return
+		default:
+		}
+		assert.True(t, m.allHandlesFullyInitialised(),
+			"handle published before initHandle ran")
+	}
 }

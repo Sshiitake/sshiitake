@@ -49,6 +49,7 @@ type Options struct {
 type tunnelHandle struct {
 	tunnel *tunnel.Tunnel
 	rt     config.ResolvedTunnel
+	ctx    context.Context // nolint:containedctx // intentional: per-handle context derived from m.runCtx
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -144,9 +145,12 @@ func (m *Manager) Run(ctx context.Context) error {
 	m.mu.Lock()
 	m.runCtx = ctx
 	// Snapshot the initial set; spawn each one. Apply may add more
-	// during the run.
+	// during the run. Initialise each handle's ctx/cancel/done BEFORE
+	// releasing the lock so waitAllHandles never sees a handle with
+	// done==nil even if it races concurrently with spawnHandle.
 	initial := make([]*tunnelHandle, 0, len(m.handles))
 	for _, h := range m.handles {
+		initHandle(ctx, h)
 		initial = append(initial, h)
 	}
 	m.mu.Unlock()
@@ -161,7 +165,7 @@ func (m *Manager) Run(ctx context.Context) error {
 	for _, h := range initial {
 		h := h
 		wg.Add(1)
-		m.spawnHandle(ctx, h, &wg, errCh)
+		m.spawnHandle(h, &wg, errCh)
 	}
 
 	// Wait until either ctx is cancelled or all initial tunnels have
@@ -204,18 +208,30 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-// spawnHandle wires up the per-tunnel context + done channel and
-// launches the goroutine that drives Start/StartWithReconnect.
+// initHandle pre-populates h.ctx, h.cancel, and h.done so the handle is
+// safe to publish into m.handles BEFORE spawnHandle launches its
+// goroutine. Without this, waitAllHandles could snapshot a handle with
+// done == nil during the gap between map insertion and goroutine start
+// and skip waiting on it during shutdown.
+//
+// The two-step (initHandle → publish to map → spawnHandle) replaces the
+// older pattern where spawnHandle mutated h.cancel/h.done itself.
+func initHandle(parent context.Context, h *tunnelHandle) {
+	hCtx, cancel := context.WithCancel(parent)
+	h.ctx = hCtx
+	h.cancel = cancel
+	h.done = make(chan struct{})
+}
+
+// spawnHandle launches the goroutine that drives
+// Start/StartWithReconnect on a handle that has already been
+// initialised by initHandle. The handle's done channel, context, and
+// cancel func must all be non-nil before this is called.
 //
 // errCh is optional; nil means "errors are advisory, only emit events."
 // Apply uses errCh=nil for tunnels added via hot-reload.
-//
-// Caller MUST hold m.mu when invoking, OR ensure the handle is not yet
-// stored in m.handles. spawnHandle takes the lock itself to insert.
-func (m *Manager) spawnHandle(parent context.Context, h *tunnelHandle, wg *sync.WaitGroup, errCh chan<- error) {
-	hCtx, cancel := context.WithCancel(parent)
-	h.cancel = cancel
-	h.done = make(chan struct{})
+func (m *Manager) spawnHandle(h *tunnelHandle, wg *sync.WaitGroup, errCh chan<- error) {
+	hCtx := h.ctx
 
 	started := make(chan struct{})
 	startDone := make(chan error, 1)

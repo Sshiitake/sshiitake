@@ -100,13 +100,18 @@ func (m *Manager) Apply(newCfg *config.Config, plan reload.Plan) error {
 		newT := tunnel.New(rt, m.tunnelOpts)
 		h := &tunnelHandle{tunnel: newT, rt: rt}
 
+		// Fully initialise the handle BEFORE publishing it to m.handles
+		// so a concurrent waitAllHandles snapshot cannot observe a
+		// handle with a nil done channel.
+		initHandle(parent, h)
+
 		m.mu.Lock()
 		m.handles[name] = h
 		m.mu.Unlock()
 
 		// errCh=nil: Apply-added tunnels surface errors via the event
 		// stream only, never via Manager.Run's return value.
-		m.spawnHandle(parent, h, nil, nil)
+		m.spawnHandle(h, nil, nil)
 	}
 
 	if len(errs) == 0 {
@@ -137,6 +142,22 @@ func (m *Manager) hasHandle(name string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.handles[name]
 	return ok
+}
+
+// allHandlesFullyInitialised reports whether every handle currently
+// stored in m.handles has a non-nil done channel and cancel func. It is
+// the test-visible expression of the spawnHandle invariant: any handle
+// reachable via m.handles must have been initialised by initHandle
+// before publication.
+func (m *Manager) allHandlesFullyInitialised() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, h := range m.handles {
+		if h.done == nil || h.cancel == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // Use a no-op reference so the static analyser stops warning about

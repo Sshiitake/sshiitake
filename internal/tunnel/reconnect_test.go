@@ -69,3 +69,18 @@ func TestIsReconnectableError(t *testing.T) {
 	assert.False(t, isReconnectableError(errors.New("HostKeyCallback required")))
 	assert.False(t, isReconnectableError(errors.New("ProxyJump=... is not yet supported")))
 }
+
+// TestIsReconnectableError_authRejection guards against the auth-rejection
+// retry storm: crypto/ssh wraps server-side credential failures inside a
+// "handshake failed" prefix, so the permanent tokens for auth rejection
+// must win over the transient "handshake" substring.
+func TestIsReconnectableError_authRejection(t *testing.T) {
+	assert.False(t, isReconnectableError(errors.New("ssh: handshake failed: ssh: unable to authenticate, attempted methods [none publickey]")))
+	assert.False(t, isReconnectableError(errors.New("ssh: handshake failed: no supported methods remain")))
+}
+
+// TestIsReconnectableError_handshakeTimeout confirms a genuinely transient
+// network-layer handshake failure still classifies as reconnectable.
+func TestIsReconnectableError_handshakeTimeout(t *testing.T) {
+	assert.True(t, isReconnectableError(errors.New("ssh: handshake failed: timeout")))
+}

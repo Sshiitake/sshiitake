@@ -49,14 +49,16 @@ func (m *Manager) Toggle(name string) error {
 	}
 
 	// Restart: reconstruct *tunnel.Tunnel from the retained
-	// ResolvedTunnel and spawn under the parent context. spawnHandle
-	// reassigns h.cancel + h.done; holding m.mu across that ensures we
-	// don't race with another Toggle / Apply on the same name.
+	// ResolvedTunnel and spawn under the parent context. initHandle
+	// reassigns h.ctx + h.cancel + h.done atomically under the lock so
+	// a concurrent Toggle / Apply / waitAllHandles always sees a fully
+	// initialised handle.
 	newT := tunnel.New(h.rt, m.tunnelOpts)
 	h.tunnel = newT
+	initHandle(parent, h)
 	m.mu.Unlock()
 
-	m.spawnHandle(parent, h, nil, nil)
+	m.spawnHandle(h, nil, nil)
 	return nil
 }
 
