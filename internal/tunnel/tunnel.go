@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/Sshiitake/sshiitake/internal/config"
+	"github.com/Sshiitake/sshiitake/internal/metrics"
 )
 
 // Status describes a tunnel's current state.
@@ -67,6 +68,8 @@ type Tunnel struct {
 	mu        sync.Mutex
 	status    Status
 	localAddr string
+
+	metrics *metrics.Tracker
 }
 
 // New constructs a Tunnel. It does not connect.
@@ -74,8 +77,19 @@ func New(rt config.ResolvedTunnel, opts Options) *Tunnel {
 	if opts.DialTimeout == 0 {
 		opts.DialTimeout = 10 * time.Second
 	}
-	return &Tunnel{rt: rt, opts: opts, status: StatusDown}
+	return &Tunnel{
+		rt:      rt,
+		opts:    opts,
+		status:  StatusDown,
+		metrics: metrics.NewTracker(),
+	}
 }
+
+// Metrics returns the per-tunnel metrics tracker. Non-nil after New.
+func (t *Tunnel) Metrics() *metrics.Tracker { return t.metrics }
+
+// Name returns the configured name of this tunnel.
+func (t *Tunnel) Name() string { return t.rt.Name }
 
 // Status returns the current tunnel state.
 func (t *Tunnel) Status() Status {
@@ -140,7 +154,7 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 		close(started)
 	}
 
-	err = forwardLocal(ctx, client, ln, t.rt.RemoteAddr)
+	err = forwardLocal(ctx, client, ln, t.rt.RemoteAddr, t.metrics)
 	// forwardLocal's ctx-cancel goroutine closed the client on cancel.
 	// Defensive close is still safe (Close is idempotent on *ssh.Client).
 	_ = client.Close()
@@ -166,9 +180,15 @@ func (t *Tunnel) dial(ctx context.Context) (*ssh.Client, error) {
 		return nil, fmt.Errorf("tunnel %q: ProxyJump=%q is not yet supported (Phase 2)",
 			t.rt.Name, t.rt.ProxyJump)
 	}
-	auth, err := t.buildAuth()
+	auth, agentConn, err := t.buildAuth()
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
+	}
+	// The agent socket is only needed during the SSH handshake; once
+	// NewClientConn returns we never call back into it. Closing it here
+	// (deferred) prevents a leaked unix-socket conn per tunnel.
+	if agentConn != nil {
+		defer func() { _ = agentConn.Close() }()
 	}
 	cfg := &ssh.ClientConfig{
 		User:            t.rt.SSHUser,
@@ -192,13 +212,19 @@ func (t *Tunnel) dial(ctx context.Context) (*ssh.Client, error) {
 	return ssh.NewClient(clientConn, chans, reqs), nil
 }
 
-func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, error) {
+// buildAuth returns the SSH auth methods to attempt and, if an
+// ssh-agent socket was successfully opened, the underlying net.Conn so
+// the caller can Close it once the handshake completes.
+func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, net.Conn, error) {
 	var methods []ssh.AuthMethod
+	var agentConn net.Conn
 
 	// Try ssh-agent if SSH_AUTH_SOCK is set.
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		if agentMethod, err := agentAuth(sock); err == nil {
-			methods = append(methods, agentMethod)
+		if conn, err := net.Dial("unix", sock); err == nil {
+			ac := agent.NewClient(conn)
+			methods = append(methods, ssh.PublicKeysCallback(ac.Signers))
+			agentConn = conn
 		}
 	}
 
@@ -211,17 +237,7 @@ func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, error) {
 
 	// Test servers use NoClientAuth; clients sending an empty Auth list
 	// are accepted in that case.
-	return methods, nil
-}
-
-// agentAuth returns an ssh.AuthMethod backed by the ssh-agent at sock.
-func agentAuth(sock string) (ssh.AuthMethod, error) {
-	conn, err := net.Dial("unix", sock)
-	if err != nil {
-		return nil, err
-	}
-	ac := agent.NewClient(conn)
-	return ssh.PublicKeysCallback(ac.Signers), nil
+	return methods, agentConn, nil
 }
 
 // keyAuth reads a private key from disk and returns it as an AuthMethod.

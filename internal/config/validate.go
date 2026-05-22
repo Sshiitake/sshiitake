@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 )
 
 // Validate checks the config for internal consistency.
@@ -32,13 +33,19 @@ func validateTunnel(t Tunnel) error {
 	if t.Host == "" {
 		return errors.New("host must not be empty")
 	}
+	if t.LocalHost != "" && !isLoopback(t.LocalHost) {
+		return fmt.Errorf("local_host %q is not a loopback address; "+
+			"binding to non-loopback exposes the tunnel to the network. "+
+			"If you really want this, ask for it in a future feature: "+
+			"expose_to_network = true (not yet implemented)", t.LocalHost)
+	}
 	switch t.Type {
 	case TypeLocal, TypeRemote, TypeDynamic:
 	default:
 		return fmt.Errorf("unknown type %q (want local, remote, or dynamic)", t.Type)
 	}
-	if !validPort(t.LocalPort) {
-		return fmt.Errorf("local_port %d out of range (1-65535)", t.LocalPort)
+	if !validLocalPort(t.LocalPort) {
+		return fmt.Errorf("local_port %d out of range (0-65535; 0 = auto-pick)", t.LocalPort)
 	}
 	switch t.Type {
 	case TypeLocal:
@@ -59,3 +66,22 @@ func validateTunnel(t Tunnel) error {
 }
 
 func validPort(p int) bool { return p >= 1 && p <= 65535 }
+
+// validLocalPort accepts 0 in addition to the normal range. local_port=0
+// asks the OS to pick a free ephemeral port at listen time; LocalAddr()
+// surfaces the actual address.
+func validLocalPort(p int) bool { return p >= 0 && p <= 65535 }
+
+// isLoopback reports whether host is a loopback bind target. Accepts the
+// literal "localhost" alongside any IP that net.ParseIP recognises as a
+// loopback (covers 127.0.0.0/8 and ::1).
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback()
+}

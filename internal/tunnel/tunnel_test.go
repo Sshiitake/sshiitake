@@ -154,3 +154,62 @@ func TestTunnel_dial_proxyJumpRefused(t *testing.T) {
 	require.Contains(t, err.Error(), "ProxyJump")
 	require.Contains(t, err.Error(), "Phase 2")
 }
+
+func TestTunnel_metricsAccessible(t *testing.T) {
+	sshAddr, hostKey := newTestSSHServer(t)
+	host, port := splitHostPort(t, sshAddr)
+
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = echo.Close() })
+	go func() {
+		for {
+			c, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_, _ = io.Copy(c, c)
+				_ = c.Close()
+			}(c)
+		}
+	}()
+
+	rt := config.ResolvedTunnel{
+		Name: "echo", SSHHost: host, SSHPort: port, SSHUser: "tester",
+		Type: config.TypeLocal, LocalHost: "127.0.0.1", LocalPort: 0,
+		RemoteAddr: echo.Addr().String(),
+	}
+	tun := New(rt, Options{HostKeyCallback: ssh.FixedHostKey(hostKey), DialTimeout: 2 * time.Second})
+
+	// Metrics tracker is non-nil even before Start.
+	require.NotNil(t, tun.Metrics())
+
+	in, out := tun.Metrics().Bytes()
+	assert.Equal(t, uint64(0), in)
+	assert.Equal(t, uint64(0), out)
+
+	// Start, push bytes through, confirm counters tick up.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() { errCh <- tun.Start(ctx, started) }()
+	<-started
+
+	c, err := net.Dial("tcp", tun.LocalAddr())
+	require.NoError(t, err)
+	_, _ = c.Write([]byte("hello"))
+	buf := make([]byte, 5)
+	_, err = io.ReadFull(c, buf)
+	require.NoError(t, err)
+	_ = c.Close()
+
+	require.Eventually(t, func() bool {
+		in, out := tun.Metrics().Bytes()
+		return in >= 5 && out >= 5
+	}, 2*time.Second, 50*time.Millisecond, "tracker did not accumulate via tunnel")
+
+	cancel()
+	<-errCh
+}

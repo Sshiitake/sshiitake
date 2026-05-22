@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strconv"
 
@@ -30,6 +32,11 @@ type ResolvedTunnel struct {
 // ResolveWithSSHConfig merges a tunnel definition with the entries in
 // the ssh config file at sshConfigPath. The path may be empty to use
 // the default ~/.ssh/config.
+//
+// A missing ssh config file is NOT fatal: callers may specify a fully
+// qualified host in tunnels.toml and have no ssh_config at all (common
+// on fresh CI runners). In that case we fall back to treating t.Host
+// as a literal SSH hostname with default port 22.
 func ResolveWithSSHConfig(t Tunnel, sshConfigPath string) (ResolvedTunnel, error) {
 	if sshConfigPath == "" {
 		home, err := os.UserHomeDir()
@@ -41,6 +48,9 @@ func ResolveWithSSHConfig(t Tunnel, sshConfigPath string) (ResolvedTunnel, error
 
 	cfg, err := openSSHConfig(sshConfigPath)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return resolveWithoutSSHConfig(t), nil
+		}
 		return ResolvedTunnel{}, err
 	}
 
@@ -79,6 +89,31 @@ func ResolveWithSSHConfig(t Tunnel, sshConfigPath string) (ResolvedTunnel, error
 		r.LocalHost = "127.0.0.1"
 	}
 	return r, nil
+}
+
+// resolveWithoutSSHConfig builds a ResolvedTunnel using only the
+// tunnels.toml fields, treating t.Host as a literal SSH hostname.
+// Used when ssh_config is absent (fresh CI runners often lack one).
+func resolveWithoutSSHConfig(t Tunnel) ResolvedTunnel {
+	localHost := t.LocalHost
+	if localHost == "" {
+		localHost = "127.0.0.1"
+	}
+	var remote string
+	switch t.Type {
+	case TypeLocal:
+		remote = fmt.Sprintf("%s:%d", t.RemoteHost, t.RemotePort)
+	case TypeRemote:
+		remote = fmt.Sprintf("%s:%d", t.LocalHost, t.LocalPort)
+	}
+	return ResolvedTunnel{
+		SSHHost:    t.Host,
+		SSHPort:    22,
+		Type:       t.Type,
+		LocalHost:  localHost,
+		LocalPort:  t.LocalPort,
+		RemoteAddr: remote,
+	}
 }
 
 func openSSHConfig(path string) (*sshcfg.Config, error) {

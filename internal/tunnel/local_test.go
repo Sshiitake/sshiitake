@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/Sshiitake/sshiitake/internal/metrics"
 )
 
 func TestForwardLocal_passesBytes(t *testing.T) {
@@ -51,7 +53,7 @@ func TestForwardLocal_passesBytes(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- forwardLocal(ctx, sshClient, listener, echo.Addr().String())
+		errCh <- forwardLocal(ctx, sshClient, listener, echo.Addr().String(), nil)
 	}()
 
 	// Connect to the local port, send bytes, expect echo.
@@ -99,7 +101,7 @@ func TestForwardLocal_closesClientOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- forwardLocal(ctx, sshClient, listener, "127.0.0.1:1") }()
+	go func() { errCh <- forwardLocal(ctx, sshClient, listener, "127.0.0.1:1", nil) }()
 
 	// Wait briefly so the ctx-goroutine arms.
 	time.Sleep(50 * time.Millisecond)
@@ -119,4 +121,53 @@ func TestForwardLocal_closesClientOnCancel(t *testing.T) {
 	// New dials should fail because client is closed.
 	_, dialErr := sshClient.Dial("tcp", "127.0.0.1:1")
 	require.Error(t, dialErr, "client should be closed; further Dial must fail")
+}
+
+func TestForwardLocal_recordsByteCounts(t *testing.T) {
+	sshAddr, hostKey := newTestSSHServer(t)
+
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = echo.Close() })
+	go func() {
+		for {
+			c, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_, _ = io.Copy(c, c)
+				_ = c.Close()
+			}(c)
+		}
+	}()
+
+	cfg := &ssh.ClientConfig{User: "tester", HostKeyCallback: ssh.FixedHostKey(hostKey)}
+	sshClient, err := ssh.Dial("tcp", sshAddr, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sshClient.Close() })
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	tracker := metrics.NewTracker()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = forwardLocal(ctx, sshClient, listener, echo.Addr().String(), tracker) }()
+
+	c, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+	_, err = c.Write(make([]byte, 1000))
+	require.NoError(t, err)
+	buf := make([]byte, 1000)
+	_, err = io.ReadFull(c, buf)
+	require.NoError(t, err)
+	_ = c.Close()
+
+	// Allow the io.Copy goroutines to drain before reading counters.
+	require.Eventually(t, func() bool {
+		in, out := tracker.Bytes()
+		return in >= 1000 && out >= 1000
+	}, 2*time.Second, 50*time.Millisecond, "counters did not reach 1000 bytes")
 }

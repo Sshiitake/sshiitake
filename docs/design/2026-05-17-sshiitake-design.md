@@ -10,6 +10,14 @@ A small, cross-platform terminal app for managing SSH tunnels. Picks up where ma
 
 The pitch in one sentence: **define your forwards once, see at a glance which are up, and toggle them with a keystroke.**
 
+## Implementation status
+
+- **Phase 1 shipped (2026-05-17):** single tunnel via `ssht up <name>`, TOML config, in-process SSH, CI matrix.
+- **Phase 1.5 shipped (2026-05-18):** real `~/.ssh/known_hosts` verification, `ErrKeyMismatch` / `ErrHostNotInKnownHosts` sentinels.
+- **Phase 2 shipped (2026-05-22):** manager-driven multi-tunnel orchestration, group selectors, per-tunnel metrics (bytes-in/out + latency ring), per-tunnel log ring, `ssht up --bare` newline-delimited JSON event stream, and non-loopback `local_host` rejection at validate time. Phase 2 details live in `docs/plans/2026-05-18-phase-2-manager.md` and `CHANGELOG.md`.
+
+Phase 2 limitations (planned for Phase 3+): no Bubble Tea TUI, no `fsnotify` hot-reload of config, no subprocess SSH fallback, no auto-reconnect when a tunnel drops.
+
 ## Motivation
 
 Existing tools sit at two extremes:

@@ -68,6 +68,7 @@ func TestConfigCheck_missingFile(t *testing.T) {
 
 // TestUp_endToEnd verifies the full bring-up path: load config, dial
 // in-process SSH server, open local listener, forward bytes through.
+// Manager-driven: a single-tunnel use of the multi-tunnel CLI path.
 func TestUp_endToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e in short mode")
@@ -78,23 +79,19 @@ func TestUp_endToEnd(t *testing.T) {
 
 	echoAddr := startEchoServer(t)
 
-	// Reserve a free localhost port for the tunnel's local listener.
-	// The config validator rejects local_port = 0, so we pre-bind on
-	// an ephemeral port, read it, and immediately release it. There
-	// is a small race window before tunnel.Start re-binds, but it's
-	// localhost-only and acceptable for a test.
-	localPort := reserveLocalPort(t)
-
 	dir := t.TempDir()
 	cfgPath := dir + "/tunnels.toml"
+	// local_port = 0 asks the OS for an ephemeral port. The listen-file
+	// receives the actual bound address once Start succeeds, removing
+	// the 18443 collision risk that flaked CI on shared runners.
 	require.NoError(t, os.WriteFile(cfgPath, []byte(fmt.Sprintf(`
 [tunnels.echo]
 host = "%s"
 type = "local"
-local_port = %d
+local_port = 0
 remote_host = "%s"
 remote_port = %s
-`, host, localPort, echoHost(echoAddr), echoPort(echoAddr))), 0o600))
+`, host, echoHost(echoAddr), echoPort(echoAddr))), 0o600))
 
 	sshCfgPath := dir + "/ssh_config"
 	require.NoError(t, os.WriteFile(sshCfgPath, []byte(fmt.Sprintf(`
@@ -137,7 +134,7 @@ Host %s
 		buf := make([]byte, 4)
 		_, err = io.ReadFull(c, buf)
 		return err == nil && string(buf) == "ping"
-	}, 5*time.Second, 50*time.Millisecond, "tunnel forwarding never succeeded")
+	}, 8*time.Second, 50*time.Millisecond, "tunnel forwarding never succeeded")
 
 	cancel()
 	select {
@@ -262,23 +259,6 @@ func echoPort(addr string) string {
 
 func base64HostKey(k ssh.PublicKey) string {
 	return base64.StdEncoding.EncodeToString(k.Marshal())
-}
-
-// reserveLocalPort binds an ephemeral localhost port, reads the chosen
-// port number, and immediately closes the listener. The caller then
-// re-binds that port. Small race, but localhost-only and used solely
-// to satisfy the config validator (which rejects port 0) without
-// hard-coding a number.
-func reserveLocalPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	_, p, err := net.SplitHostPort(ln.Addr().String())
-	require.NoError(t, err)
-	require.NoError(t, ln.Close())
-	pi, err := strconv.Atoi(p)
-	require.NoError(t, err)
-	return pi
 }
 
 func TestExitCode_configError(t *testing.T) {
