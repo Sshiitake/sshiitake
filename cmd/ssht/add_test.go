@@ -67,6 +67,30 @@ local_port = 1080
 	assert.ErrorContains(t, err, "already exists")
 }
 
+func TestAppendTunnel_createsParentDir(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "sub", "nested", "tunnels.toml")
+	require.NoError(t, appendTunnel(cfgPath, "x", config.Tunnel{
+		Host: "h", Type: config.TypeDynamic, LocalPort: 1080,
+	}))
+	stat, err := os.Stat(cfgPath)
+	require.NoError(t, err)
+	assert.False(t, stat.IsDir())
+}
+
+func TestAppendTunnel_enforces0600OnExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "tunnels.toml")
+	// Pre-existing with overbroad perms.
+	require.NoError(t, os.WriteFile(cfgPath, []byte{}, 0o644))
+	require.NoError(t, appendTunnel(cfgPath, "x", config.Tunnel{
+		Host: "h", Type: config.TypeDynamic, LocalPort: 1080,
+	}))
+	stat, err := os.Stat(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), stat.Mode().Perm())
+}
+
 func TestAdd_serialisesValidTOML(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "tunnels.toml")

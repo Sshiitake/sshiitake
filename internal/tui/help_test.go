@@ -10,7 +10,7 @@ import (
 func TestHelpView_includesKeyBindings(t *testing.T) {
 	h := newHelpModel(defaultKeys, darkTheme())
 	v := h.view()
-	for _, want := range []string{"toggle", "details", "filter", "quit"} {
+	for _, want := range []string{"details", "filter", "help", "quit"} {
 		assert.Contains(t, v, want, "help should include %q", want)
 	}
 }

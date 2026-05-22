@@ -64,13 +64,15 @@ Key bindings:
 
 | Key | Action |
 |---|---|
-| `space` | Toggle the selected tunnel (placeholder in Phase 3) |
+| `j` / `k` (or arrows) | Move the cursor up/down |
 | `enter` | Open detail view for the selected tunnel |
-| `esc` | Back to list view (close detail/help/filter) |
-| `/` | Filter tunnels by name or group; `enter` applies |
+| `esc` | Back to list view (close detail/help); cancel filter input |
+| `/` | Filter tunnels by name or group; `enter` applies, `esc` cancels |
 | `?` | Toggle help overlay with key map and tunnel-type diagrams |
 | `q` | Quit |
-| `j` / `k` (or arrows) | Move the cursor up/down |
+
+Per-tunnel toggle (`space`) lands in Phase 4 alongside the manager API to
+start/stop individual tunnels while the process keeps running.
 
 Themes: `--theme dark` (default), `--theme light`, `--theme high-contrast`.
 

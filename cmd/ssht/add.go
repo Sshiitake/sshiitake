@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/huh"
@@ -139,7 +140,16 @@ func appendTunnel(path, name string, t config.Tunnel) error {
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
 		return fmt.Errorf("encode: %w", err)
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o600)
+	// Ensure parent directory exists.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("mkdir parent: %w", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	// Enforce 0600 even on pre-existing files (WriteFile's perm only
+	// applies at file-create time).
+	return os.Chmod(path, 0o600)
 }
 
 // loadOrEmpty returns config.Load(path), or an empty *Config if path
