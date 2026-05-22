@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -150,19 +153,19 @@ func appendTunnel(path, name string, t config.Tunnel) error {
 		return fmt.Errorf("mkdir parent: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tunnels.toml.*")
+	// Atomic-create at 0600 in one step. os.CreateTemp respects umask,
+	// so a permissive umask could leave the tempfile group/world-readable
+	// in the gap between CreateTemp and the follow-up Chmod. O_CREATE|
+	// O_EXCL combined with 0600 closes that race: the file exists with
+	// the strict mode the instant it appears on disk.
+	tmp, tmpPath, err := createExclusiveTempFile(filepath.Dir(path), ".tunnels.toml.")
 	if err != nil {
 		return fmt.Errorf("create temp: %w", err)
 	}
-	tmpPath := tmp.Name()
 	// Safe if already renamed away: Remove on a non-existent path is a
 	// no-op we deliberately swallow.
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod temp: %w", err)
-	}
 	if _, err := tmp.Write(buf.Bytes()); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("write temp: %w", err)
@@ -171,6 +174,38 @@ func appendTunnel(path, name string, t config.Tunnel) error {
 		return fmt.Errorf("close temp: %w", err)
 	}
 	return os.Rename(tmpPath, path)
+}
+
+// createExclusiveTempFile opens a fresh tempfile in dir whose name
+// starts with prefix and ends with a random hex suffix, using O_EXCL +
+// mode 0600 so the file is never visible with a more permissive mode.
+// Retries on the (extremely unlikely) collision; gives up after 10
+// attempts.
+func createExclusiveTempFile(dir, prefix string) (*os.File, string, error) {
+	for i := 0; i < 10; i++ {
+		suffix, err := randomSuffix()
+		if err != nil {
+			return nil, "", fmt.Errorf("random suffix: %w", err)
+		}
+		tmpPath := filepath.Join(dir, prefix+suffix)
+		f, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			return f, tmpPath, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, "", err
+		}
+	}
+	return nil, "", errors.New("could not create unique tempfile after 10 attempts")
+}
+
+// randomSuffix returns 8 random hex characters sourced from crypto/rand.
+func randomSuffix() (string, error) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // loadOrEmpty returns config.Load(path), or an empty *Config if path
