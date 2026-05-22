@@ -106,3 +106,14 @@ func (s *subscribers) publish(e Event) {
 		}
 	}
 }
+
+// closeAll closes every active subscription. Called on Manager shutdown.
+func (s *subscribers) closeAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	for ch := range s.chans {
+		close(ch)
+		delete(s.chans, ch)
+	}
+}

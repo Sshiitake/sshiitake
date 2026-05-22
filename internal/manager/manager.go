@@ -7,9 +7,12 @@
 package manager
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/Sshiitake/sshiitake/internal/config"
 	"github.com/Sshiitake/sshiitake/internal/tunnel"
@@ -74,6 +77,62 @@ func (m *Manager) Tunnels() []*tunnel.Tunnel {
 	out := make([]*tunnel.Tunnel, len(m.tunnels))
 	copy(out, m.tunnels)
 	return out
+}
+
+// Subscribe returns a buffered event channel.
+func (m *Manager) Subscribe(buf int) chan Event { return m.subs.Subscribe(buf) }
+
+// Unsubscribe closes the channel.
+func (m *Manager) Unsubscribe(ch chan Event) { m.subs.Unsubscribe(ch) }
+
+// Run starts all tunnels concurrently and blocks until ctx is
+// cancelled. Returns the first error from any tunnel that fails fatally
+// (e.g. dial error); other tunnels are stopped before Run returns.
+// On graceful shutdown (ctx cancel), returns nil.
+func (m *Manager) Run(ctx context.Context) error {
+	defer m.subs.closeAll()
+
+	g, ctx := errgroup.WithContext(ctx)
+	for _, t := range m.tunnels {
+		t := t // capture
+		g.Go(func() error {
+			return m.runOne(ctx, t)
+		})
+	}
+	if err := g.Wait(); err != nil && ctx.Err() == nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) runOne(ctx context.Context, t *tunnel.Tunnel) error {
+	started := make(chan struct{})
+
+	stateCh := make(chan struct{})
+	go func() {
+		defer close(stateCh)
+		// Watch for the started signal so we can emit the Up event.
+		<-started
+		m.subs.publish(Event{
+			Type:       EventTunnelState,
+			TunnelName: t.Name(),
+			Timestamp:  time.Now().UTC(),
+			Status:     tunnel.StatusUp,
+		})
+	}()
+
+	err := t.Start(ctx, started)
+
+	// Emit Down state (regardless of error vs graceful).
+	m.subs.publish(Event{
+		Type:       EventTunnelState,
+		TunnelName: t.Name(),
+		Timestamp:  time.Now().UTC(),
+		Status:     tunnel.StatusDown,
+	})
+
+	<-stateCh // make sure the stateCh goroutine is collected
+	return err
 }
 
 // resolveSelectors returns the ordered list of tunnel names to manage,
