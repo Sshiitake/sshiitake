@@ -32,12 +32,19 @@ type Model struct {
 
 	events <-chan manager.Event
 
+	// onToggle is called when the user presses the Toggle binding on a
+	// selected row. May be nil (tests / non-interactive use); the press
+	// then becomes a no-op.
+	onToggle func(name string)
+
 	width, height int
 }
 
 // NewModel constructs a fresh Model. events may be nil for tests, in
-// which case Init returns no commands.
-func NewModel(events <-chan manager.Event, theme Theme) *Model {
+// which case Init returns no commands. onToggle may be nil; when nil, the
+// space-to-toggle binding is a no-op (useful in tests that only exercise
+// rendering / filter behaviour).
+func NewModel(events <-chan manager.Event, theme Theme, onToggle func(name string)) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "filter..."
 	ti.Prompt = "/ "
@@ -50,6 +57,7 @@ func NewModel(events <-chan manager.Event, theme Theme) *Model {
 		filterInput: ti,
 		currentView: viewList,
 		events:      events,
+		onToggle:    onToggle,
 	}
 }
 
@@ -150,6 +158,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if row, ok := m.list.selected(); ok {
 			m.detail.show(row)
 			m.currentView = viewDetail
+		}
+	case key.Matches(msg, m.keys.Toggle):
+		if m.onToggle != nil {
+			if row, ok := m.list.selected(); ok {
+				m.onToggle(row.Name)
+			}
 		}
 	case key.Matches(msg, m.keys.Back):
 		m.currentView = viewList

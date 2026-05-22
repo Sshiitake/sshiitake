@@ -41,8 +41,14 @@ type Options struct {
 
 // tunnelHandle pairs a tunnel with the lifecycle plumbing that lets
 // Apply stop it without disturbing siblings.
+//
+// rt is retained so Toggle can rebuild a fresh *tunnel.Tunnel after a
+// stop without going back through the ssh_config resolver. A stopped
+// tunnel.Tunnel cannot be restarted in place (its internal listener and
+// status fields are scoped to one Start call), so restart = new Tunnel.
 type tunnelHandle struct {
 	tunnel *tunnel.Tunnel
+	rt     config.ResolvedTunnel
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -88,6 +94,7 @@ func New(cfg *config.Config, sshConfigPath string, opts Options) (*Manager, erro
 		rt.Name = name
 		handles[name] = &tunnelHandle{
 			tunnel: tunnel.New(rt, tunnelOpts),
+			rt:     rt,
 		}
 	}
 

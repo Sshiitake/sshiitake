@@ -98,7 +98,7 @@ func (m *Manager) Apply(newCfg *config.Config, plan reload.Plan) error {
 		}
 		rt.Name = name
 		newT := tunnel.New(rt, m.tunnelOpts)
-		h := &tunnelHandle{tunnel: newT}
+		h := &tunnelHandle{tunnel: newT, rt: rt}
 
 		m.mu.Lock()
 		m.handles[name] = h

@@ -10,6 +10,7 @@ type keyMap struct {
 	Enter  key.Binding
 	Back   key.Binding
 	Filter key.Binding
+	Toggle key.Binding
 	Help   key.Binding
 	Quit   key.Binding
 }
@@ -20,19 +21,20 @@ var defaultKeys = keyMap{
 	Enter:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "details")),
 	Back:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	Filter: key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+	Toggle: key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle")),
 	Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Quit:   key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
 // ShortHelp returns key bindings shown in the footer.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Filter, k.Help, k.Quit}
+	return []key.Binding{k.Toggle, k.Filter, k.Help, k.Quit}
 }
 
 // FullHelp returns the grouped key bindings shown in the help overlay.
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter, k.Back},
-		{k.Filter, k.Help, k.Quit},
+		{k.Toggle, k.Filter, k.Help, k.Quit},
 	}
 }
