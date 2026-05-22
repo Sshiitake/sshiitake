@@ -140,7 +140,7 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 		close(started)
 	}
 
-	err = forwardLocal(ctx, client, ln, t.rt.RemoteAddr)
+	err = forwardLocal(ctx, client, ln, t.rt.RemoteAddr, nil)
 	// forwardLocal's ctx-cancel goroutine closed the client on cancel.
 	// Defensive close is still safe (Close is idempotent on *ssh.Client).
 	_ = client.Close()

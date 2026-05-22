@@ -9,14 +9,14 @@ import (
 	"sync"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/Sshiitake/sshiitake/internal/metrics"
 )
 
 // forwardLocal serves ln, dialling each accepted connection through
 // sshClient to remoteAddr ("host:port"). It returns when ctx is
-// cancelled. Errors that occur while serving a single connection are
-// not returned; they are swallowed silently in Phase 1. Phase 2 wires
-// a logger in.
-func forwardLocal(ctx context.Context, sshClient *ssh.Client, ln net.Listener, remoteAddr string) error {
+// cancelled. If tracker is non-nil, bytes-in and bytes-out are recorded.
+func forwardLocal(ctx context.Context, sshClient *ssh.Client, ln net.Listener, remoteAddr string, tracker *metrics.Tracker) error {
 	var (
 		mu     sync.Mutex
 		active = make(map[net.Conn]struct{})
@@ -61,12 +61,12 @@ func forwardLocal(ctx context.Context, sshClient *ssh.Client, ln net.Listener, r
 				delete(active, local)
 				mu.Unlock()
 			}()
-			pipeOneConn(sshClient, local, remoteAddr)
+			pipeOneConn(sshClient, local, remoteAddr, tracker)
 		}(local)
 	}
 }
 
-func pipeOneConn(sshClient *ssh.Client, local net.Conn, remoteAddr string) {
+func pipeOneConn(sshClient *ssh.Client, local net.Conn, remoteAddr string, tracker *metrics.Tracker) {
 	defer func() { _ = local.Close() }()
 	remote, err := sshClient.Dial("tcp", remoteAddr)
 	if err != nil {
@@ -76,11 +76,17 @@ func pipeOneConn(sshClient *ssh.Client, local net.Conn, remoteAddr string) {
 
 	done := make(chan struct{}, 2)
 	go func() {
-		_, _ = io.Copy(remote, local)
+		n, _ := io.Copy(remote, local)
+		if tracker != nil {
+			tracker.AddBytesOut(n)
+		}
 		done <- struct{}{}
 	}()
 	go func() {
-		_, _ = io.Copy(local, remote)
+		n, _ := io.Copy(local, remote)
+		if tracker != nil {
+			tracker.AddBytesIn(n)
+		}
 		done <- struct{}{}
 	}()
 	<-done
