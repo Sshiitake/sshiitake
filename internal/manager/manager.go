@@ -88,14 +88,25 @@ func resolveSelectors(cfg *config.Config, selectors []string) ([]string, error) 
 		return names, nil
 	}
 
+	seen := make(map[string]struct{})
 	var out []string
+	add := func(name string) {
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+
 	for _, sel := range selectors {
 		if _, ok := cfg.Groups[sel]; ok {
-			out = append(out, tunnelsInGroup(cfg, sel)...)
+			for _, n := range tunnelsInGroup(cfg, sel) {
+				add(n)
+			}
 			continue
 		}
 		if _, ok := cfg.Tunnels[sel]; ok {
-			out = append(out, sel)
+			add(sel)
 			continue
 		}
 		return nil, fmt.Errorf("selector %q: not found (neither tunnel nor group)", sel)
