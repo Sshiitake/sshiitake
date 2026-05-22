@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/Sshiitake/sshiitake/internal/manager"
 	"github.com/Sshiitake/sshiitake/internal/tunnel"
@@ -44,4 +45,25 @@ func TestModel_filterEnterReturnsToList(t *testing.T) {
 	// Enter exits to list with the filter applied.
 	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, viewList, model.(*Model).currentView)
+}
+
+func TestModel_filterEscRestoresPreviousFilter(t *testing.T) {
+	m := NewModel(nil, ThemeByNameOrDefault("dark"))
+	// Apply a filter first.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	mm := model.(*Model)
+	mm.filterInput.SetValue("api")
+	model, _ = mm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm = model.(*Model)
+	require.Equal(t, "api", mm.list.filter)
+	// Open filter and start typing, then cancel.
+	model, _ = mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	mm = model.(*Model)
+	mm.filterInput.SetValue("zzz")
+	model, _ = mm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm = model.(*Model)
+	// Filter on list should still be "api", not "zzz".
+	require.Equal(t, "api", mm.list.filter)
+	// Filter input value should be restored to the previously-applied "api".
+	require.Equal(t, "api", mm.filterInput.Value())
 }

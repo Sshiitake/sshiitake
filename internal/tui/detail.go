@@ -55,7 +55,7 @@ func (d *detailModel) applyEvent(e manager.Event) {
 			d.row.Latency = d.row.Latency[len(d.row.Latency)-60:]
 		}
 	case manager.EventLog:
-		d.logs = append(d.logs, logbuffer.Entry{At: e.Timestamp, Message: e.Message})
+		d.logs = append(d.logs, logbuffer.Entry{At: e.Timestamp, Message: sanitiseForTerminal(e.Message)})
 		if len(d.logs) > 12 {
 			d.logs = d.logs[len(d.logs)-12:]
 		}
@@ -69,13 +69,13 @@ func (d *detailModel) view() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(d.theme.GroupHeader.Render(d.row.Name))
+	b.WriteString(d.theme.GroupHeader.Render(sanitiseForTerminal(d.row.Name)))
 	b.WriteString("  ")
 	b.WriteString(statusDot(d.row.Status, d.theme))
 	b.WriteString("\n\n")
 
 	fmt.Fprintf(&b, "  Status:           %s\n", d.row.Status)
-	fmt.Fprintf(&b, "  Forward:          %s\n", d.row.LocalAddr)
+	fmt.Fprintf(&b, "  Forward:          %s\n", sanitiseForTerminal(d.row.LocalAddr))
 	fmt.Fprintf(&b, "  Sent:             %s\n", formatBytes(d.row.BytesOut))
 	fmt.Fprintf(&b, "  Received:         %s\n", formatBytes(d.row.BytesIn))
 	fmt.Fprintf(&b, "  Latency:          %4.1f ms  %s\n", d.row.LatencyMs, RenderSparkline(d.row.Latency, 24))

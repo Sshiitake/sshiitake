@@ -68,8 +68,12 @@ func (l *listModel) findOrCreate(name string) *tunnelRow {
 	return &l.tunnels[len(l.tunnels)-1]
 }
 
-// setFilter records the current filter query (case-insensitive substring).
-func (l *listModel) setFilter(q string) { l.filter = q }
+// setFilter records the current filter query (case-insensitive substring)
+// and resets the cursor to 0 so the selection points at a visible row.
+func (l *listModel) setFilter(q string) {
+	l.filter = q
+	l.cursor = 0
+}
 
 // visibleTunnels returns the rows passing the current filter (or all rows
 // when filter is empty).
@@ -160,7 +164,7 @@ func (l *listModel) view() string {
 // renderRow renders a single tunnel row, optionally with the selection marker.
 func (l *listModel) renderRow(t tunnelRow, selected bool) string {
 	dot := statusDot(t.Status, l.theme)
-	name := l.theme.TunnelName.Render(t.Name)
+	name := l.theme.TunnelName.Render(sanitiseForTerminal(t.Name))
 	addr := t.LocalAddr
 	if addr == "" {
 		addr = l.theme.HelpText.Render("(down)")

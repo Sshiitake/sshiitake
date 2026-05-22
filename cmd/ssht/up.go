@@ -78,6 +78,8 @@ func upCmd() *cobra.Command {
 					<-runErr
 					return err
 				case err := <-runErr:
+					cancel()
+					<-tuiErr
 					return err
 				}
 			}

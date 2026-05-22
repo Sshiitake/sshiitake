@@ -112,8 +112,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.currentView == viewFilter {
 		switch msg.Type {
-		case tea.KeyEnter, tea.KeyEsc:
+		case tea.KeyEnter:
 			m.list.setFilter(m.filterInput.Value())
+			m.currentView = viewList
+			return m, nil
+		case tea.KeyEsc:
+			// Cancel: restore the input to the previously-applied filter
+			// (so reopening filter mode doesn't lose what was applied earlier).
+			m.filterInput.SetValue(m.list.filter)
 			m.currentView = viewList
 			return m, nil
 		default:

@@ -71,6 +71,19 @@ func TestListView_filter(t *testing.T) {
 	}
 }
 
+func TestListView_filterResetsCursor(t *testing.T) {
+	l := newListModel(defaultKeys, darkTheme())
+	l.tunnels = []tunnelRow{
+		{Name: "a"}, {Name: "b"}, {Name: "api-c"}, {Name: "d"}, {Name: "e"},
+	}
+	l.cursor = 3
+	l.setFilter("api")
+	require.Equal(t, 0, l.cursor)
+	row, ok := l.selected()
+	require.True(t, ok)
+	require.Equal(t, "api-c", row.Name)
+}
+
 func TestListView_cursorAndSelection(t *testing.T) {
 	l := newListModel(defaultKeys, darkTheme())
 	l.tunnels = []tunnelRow{
