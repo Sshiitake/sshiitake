@@ -108,8 +108,3 @@ func streamHumanEvents(cmd *cobra.Command, eventCh chan manager.Event, runErr ch
 		}
 	}
 }
-
-// streamBareEvents is stubbed in Task 11 and implemented in Task 12.
-func streamBareEvents(_ *cobra.Command, _ chan manager.Event, _ chan error, _ *manager.Manager) error {
-	return fmt.Errorf("--bare is not yet wired up; see Task 12")
-}
