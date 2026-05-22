@@ -88,6 +88,9 @@ func New(rt config.ResolvedTunnel, opts Options) *Tunnel {
 // Metrics returns the per-tunnel metrics tracker. Non-nil after New.
 func (t *Tunnel) Metrics() *metrics.Tracker { return t.metrics }
 
+// Name returns the configured name of this tunnel.
+func (t *Tunnel) Name() string { return t.rt.Name }
+
 // Status returns the current tunnel state.
 func (t *Tunnel) Status() Status {
 	t.mu.Lock()
