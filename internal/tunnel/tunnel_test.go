@@ -2,8 +2,14 @@ package tunnel
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -212,4 +218,61 @@ func TestTunnel_metricsAccessible(t *testing.T) {
 
 	cancel()
 	<-errCh
+}
+
+// TestKeyAuth_refusesOverbroadPerms verifies that keyAuth refuses a
+// private key whose file mode permits group/other access, matching
+// OpenSSH's stricture.
+func TestKeyAuth_refusesOverbroadPerms(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key")
+	// Generate a real RSA key so PEM parsing would succeed if perms
+	// passed; this isolates the perm check as the failure cause.
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pemBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(rsaKey)}
+	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(pemBlock), 0o644))
+
+	_, err = keyAuth(keyPath)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "permissions too open")
+}
+
+// TestKeyAuth_errorDoesNotLeakPath ensures parse errors don't echo the
+// full key path back to the user; the message stays generic.
+func TestKeyAuth_errorDoesNotLeakPath(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "bad-key")
+	require.NoError(t, os.WriteFile(keyPath, []byte("not a key"), 0o600))
+
+	_, err := keyAuth(keyPath)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), dir, "error should not leak the file path")
+}
+
+// TestBuildAuth_errorsWhenAllAttemptsFailed verifies that buildAuth
+// surfaces a wrapped error when at least one auth source was attempted
+// AND every attempt failed.
+func TestBuildAuth_errorsWhenAllAttemptsFailed(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	dir := t.TempDir()
+	missingKey := filepath.Join(dir, "no-such-key")
+
+	tun := &Tunnel{rt: config.ResolvedTunnel{IdentityFile: missingKey}}
+	methods, _, err := tun.buildAuth()
+	require.Error(t, err)
+	assert.Empty(t, methods)
+}
+
+// TestBuildAuth_silentEmptyWhenNothingTried verifies that buildAuth
+// stays silent (no error, no methods) when nothing was configured.
+// The test SSH server uses NoClientAuth, so an empty methods slice is
+// the desired outcome there.
+func TestBuildAuth_silentEmptyWhenNothingTried(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	tun := &Tunnel{rt: config.ResolvedTunnel{IdentityFile: ""}}
+	methods, _, err := tun.buildAuth()
+	require.NoError(t, err)
+	assert.Empty(t, methods)
 }

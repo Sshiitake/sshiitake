@@ -215,43 +215,67 @@ func (t *Tunnel) dial(ctx context.Context) (*ssh.Client, error) {
 // buildAuth returns the SSH auth methods to attempt and, if an
 // ssh-agent socket was successfully opened, the underlying net.Conn so
 // the caller can Close it once the handshake completes.
+//
+// Returns an error when at least one auth source was attempted AND
+// every attempt failed. Silent empty when nothing was configured (the
+// test-server NoClientAuth path relies on this).
 func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, net.Conn, error) {
 	var methods []ssh.AuthMethod
 	var agentConn net.Conn
+	var attempted bool
+	var firstErr error
 
 	// Try ssh-agent if SSH_AUTH_SOCK is set.
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		if conn, err := net.Dial("unix", sock); err == nil {
+		attempted = true
+		conn, err := net.Dial("unix", sock)
+		if err == nil {
 			ac := agent.NewClient(conn)
 			methods = append(methods, ssh.PublicKeysCallback(ac.Signers))
 			agentConn = conn
+		} else if firstErr == nil {
+			firstErr = fmt.Errorf("ssh-agent: %w", err)
 		}
 	}
 
 	// Try the configured IdentityFile.
 	if t.rt.IdentityFile != "" {
+		attempted = true
 		if keyMethod, err := keyAuth(t.rt.IdentityFile); err == nil {
 			methods = append(methods, keyMethod)
+		} else if firstErr == nil {
+			firstErr = err
 		}
 	}
 
+	if attempted && len(methods) == 0 {
+		return nil, nil, fmt.Errorf("no usable auth methods: %w", firstErr)
+	}
 	// Test servers use NoClientAuth; clients sending an empty Auth list
 	// are accepted in that case.
 	return methods, agentConn, nil
 }
 
 // keyAuth reads a private key from disk and returns it as an AuthMethod.
+// Refuses keys with permissions broader than 0600 (matches OpenSSH).
 func keyAuth(path string) (ssh.AuthMethod, error) {
 	if expanded, err := expandHome(path); err == nil {
 		path = expanded
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat private key: %w", err)
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		return nil, fmt.Errorf("private key permissions too open (%04o); want 0600 or stricter", mode)
+	}
 	pem, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read private key: %w", err)
 	}
 	signer, err := ssh.ParsePrivateKey(pem)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("parse private key: %w", err)
 	}
 	return ssh.PublicKeys(signer), nil
 }
