@@ -3,10 +3,11 @@
 A TUI SSH tunnel manager. Define your forwards once, see at a glance which are
 up, toggle them with a keystroke.
 
-> **Status: Phase 1 + 1.5 + 2 shipped, no TUI yet.** The CLI brings up one or
-> more tunnels (or a named group) from `~/.config/sshiitake/tunnels.toml`, with
+> **Status: Phase 1 + 1.5 + 2 + 3 shipped.** TUI by default on TTY;
+> `--bare`/`--no-tui` for non-interactive use. The CLI brings up one or more
+> tunnels (or a named group) from `~/.config/sshiitake/tunnels.toml`, with
 > `~/.ssh/known_hosts` verification and per-tunnel metrics. `--bare` streams
-> JSON events for status-bar integration. TUI lands in Phase 3.
+> JSON events for status-bar integration.
 
 ## Quick Start
 
@@ -53,6 +54,40 @@ Bring up a named group (defined under `[groups.<name>]` in your config):
 ssht up work-stack
 ```
 
+## TUI
+
+`ssht up <name>` opens an interactive Bubble Tea TUI when stdout is a TTY.
+Use `--no-tui` to fall back to the human-readable stream, or `--bare` for
+newline-delimited JSON.
+
+Key bindings:
+
+| Key | Action |
+|---|---|
+| `j` / `k` (or arrows) | Move the cursor up/down |
+| `enter` | Open detail view for the selected tunnel |
+| `esc` | Back to list view (close detail/help); cancel filter input |
+| `/` | Filter tunnels by name or group; `enter` applies, `esc` cancels |
+| `?` | Toggle help overlay with key map and tunnel-type diagrams |
+| `q` | Quit |
+
+Per-tunnel toggle (`space`) lands in Phase 4 alongside the manager API to
+start/stop individual tunnels while the process keeps running.
+
+Themes: `--theme dark` (default), `--theme light`, `--theme high-contrast`.
+
+## Adding tunnels interactively
+
+```bash
+ssht add
+```
+
+Walks you through name, host, type (local / remote / dynamic), ports, and
+group, then appends a new entry to `tunnels.toml`. Refuses to overwrite an
+existing tunnel name.
+
+## Streaming JSON events
+
 Stream newline-delimited JSON events for a status bar (SketchyBar, xbar,
 Waybar, tmux status, anything line-buffered):
 
@@ -86,6 +121,8 @@ ssht up --bare api-prod | sketchybar-renderer
 | `--ssh-config` | `~/.ssh/config` | Path to ssh_config (read-only, used for host identity) |
 | `--known-hosts` | `~/.ssh/known_hosts` | Path to known_hosts (used for host-key verification) |
 | `--bare` | (off) | Stream newline-delimited JSON events to stdout (no human-friendly output) |
+| `--no-tui` | (off) | Force the human-readable stream even on a TTY |
+| `--theme` | `dark` | TUI palette: `dark`, `light`, or `high-contrast` |
 
 ## Why
 
