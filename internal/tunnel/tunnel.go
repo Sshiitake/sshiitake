@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/Sshiitake/sshiitake/internal/config"
+	"github.com/Sshiitake/sshiitake/internal/metrics"
 )
 
 // Status describes a tunnel's current state.
@@ -67,6 +68,8 @@ type Tunnel struct {
 	mu        sync.Mutex
 	status    Status
 	localAddr string
+
+	metrics *metrics.Tracker
 }
 
 // New constructs a Tunnel. It does not connect.
@@ -74,8 +77,16 @@ func New(rt config.ResolvedTunnel, opts Options) *Tunnel {
 	if opts.DialTimeout == 0 {
 		opts.DialTimeout = 10 * time.Second
 	}
-	return &Tunnel{rt: rt, opts: opts, status: StatusDown}
+	return &Tunnel{
+		rt:      rt,
+		opts:    opts,
+		status:  StatusDown,
+		metrics: metrics.NewTracker(),
+	}
 }
+
+// Metrics returns the per-tunnel metrics tracker. Non-nil after New.
+func (t *Tunnel) Metrics() *metrics.Tracker { return t.metrics }
 
 // Status returns the current tunnel state.
 func (t *Tunnel) Status() Status {
@@ -140,7 +151,7 @@ func (t *Tunnel) Start(ctx context.Context, started chan<- struct{}) error {
 		close(started)
 	}
 
-	err = forwardLocal(ctx, client, ln, t.rt.RemoteAddr, nil)
+	err = forwardLocal(ctx, client, ln, t.rt.RemoteAddr, t.metrics)
 	// forwardLocal's ctx-cancel goroutine closed the client on cancel.
 	// Defensive close is still safe (Close is idempotent on *ssh.Client).
 	_ = client.Close()
