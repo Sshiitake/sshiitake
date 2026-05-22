@@ -2,8 +2,11 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -164,6 +167,52 @@ func TestRun_emitsMetricsEvents(t *testing.T) {
 			t.Fatal("no EventMetrics with bytes received")
 		}
 	}
+}
+
+// TestRun_dialFailureDoesNotDeadlock locks in the BLOCKER fix from
+// Phase 2 iter-1: when Tunnel.Start returns a dial error before
+// signalling started, runOne must not block forever on <-started.
+// Before the fix, Run hung indefinitely; we set a 4s upper bound which
+// would have timed out under the old code.
+func TestRun_dialFailureDoesNotDeadlock(t *testing.T) {
+	cfg := &config.Config{
+		Tunnels: map[string]config.Tunnel{
+			"bad": {Host: "127.0.0.1", Type: config.TypeLocal,
+				LocalPort: 0, RemoteHost: "127.0.0.1", RemotePort: 80},
+		},
+	}
+	// Point at a port nothing listens on for a fast dial failure.
+	sshCfgPath := writeTempSSHConfigBadPort(t, "127.0.0.1", 1)
+
+	m, err := New(cfg, sshCfgPath, Options{
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	})
+	require.NoError(t, err)
+
+	ch := m.Subscribe(16)
+	defer m.Unsubscribe(ch)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- m.Run(ctx) }()
+
+	select {
+	case err := <-runErr:
+		require.Error(t, err, "Run should return dial error, not block")
+	case <-time.After(4 * time.Second):
+		t.Fatal("Run deadlocked on dial failure (would have hung forever before this fix)")
+	}
+}
+
+func writeTempSSHConfigBadPort(t *testing.T, host string, port int) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ssh_config")
+	content := fmt.Sprintf("Host %s\n    HostName %s\n    Port %d\n    User tester\n", host, host, port)
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
 }
 
 func requireEventEventually(t *testing.T, ch chan Event, et EventType, st tunnel.Status, dur time.Duration) {

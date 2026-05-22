@@ -94,14 +94,20 @@ func (m *Manager) Run(ctx context.Context) error {
 
 	m.startMetricsTicker(ctx)
 
-	g, ctx := errgroup.WithContext(ctx)
+	// Preserve the outer ctx so we can distinguish graceful shutdown
+	// (caller cancelled) from a tunnel failing. errgroup.WithContext
+	// returns a derived ctx that it cancels as soon as any goroutine
+	// returns non-nil, so checking gctx.Err() == nil after Wait() would
+	// always be false on error and we'd swallow the error.
+	outerCtx := ctx
+	g, gctx := errgroup.WithContext(ctx)
 	for _, t := range m.tunnels {
 		t := t // capture
 		g.Go(func() error {
-			return m.runOne(ctx, t)
+			return m.runOne(gctx, t)
 		})
 	}
-	if err := g.Wait(); err != nil && ctx.Err() == nil {
+	if err := g.Wait(); err != nil && outerCtx.Err() == nil {
 		return err
 	}
 	return nil
@@ -146,32 +152,51 @@ func (m *Manager) startMetricsTicker(ctx context.Context) {
 
 func (m *Manager) runOne(ctx context.Context, t *tunnel.Tunnel) error {
 	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- t.Start(ctx, started) }()
 
-	stateCh := make(chan struct{})
-	go func() {
-		defer close(stateCh)
-		// Watch for the started signal so we can emit the Up event.
-		<-started
+	// Wait for either started (listener accepting) or done (Start
+	// returned an error before signalling started, e.g. dial or listen
+	// failure). Without this select, a goroutine waiting on <-started
+	// would block forever if Start fails before closing it, deadlocking
+	// Run for the lifetime of the process.
+	select {
+	case <-started:
 		m.subs.publish(Event{
 			Type:       EventTunnelState,
 			TunnelName: t.Name(),
 			Timestamp:  time.Now().UTC(),
 			Status:     tunnel.StatusUp,
 		})
-	}()
+	case err := <-done:
+		m.subs.publish(Event{
+			Type:       EventTunnelState,
+			TunnelName: t.Name(),
+			Timestamp:  time.Now().UTC(),
+			Status:     tunnel.StatusDown,
+			Message:    errMessage(err),
+		})
+		return err
+	}
 
-	err := t.Start(ctx, started)
-
-	// Emit Down state (regardless of error vs graceful).
+	err := <-done
 	m.subs.publish(Event{
 		Type:       EventTunnelState,
 		TunnelName: t.Name(),
 		Timestamp:  time.Now().UTC(),
 		Status:     tunnel.StatusDown,
+		Message:    errMessage(err),
 	})
-
-	<-stateCh // make sure the stateCh goroutine is collected
 	return err
+}
+
+// errMessage returns "" for nil, otherwise the error's string form,
+// for embedding in EventTunnelState{Down}.
+func errMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // resolveSelectors returns the ordered list of tunnel names to manage,

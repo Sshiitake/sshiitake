@@ -70,15 +70,26 @@ func pipeOneConn(sshClient *ssh.Client, local net.Conn, remoteAddr string, track
 	defer func() { _ = local.Close() }()
 	remote, err := sshClient.Dial("tcp", remoteAddr)
 	if err != nil {
+		// TODO(phase 3): wire a *logbuffer.Buffer into Tunnel so per-
+		// connection dial failures surface in the log stream rather
+		// than being silently discarded.
 		return
 	}
 	defer func() { _ = remote.Close() }()
 
+	// Half-close pattern: drain BOTH directions before returning, and
+	// CloseWrite the opposite peer when one direction EOFs so the peer
+	// sees end-of-stream and unblocks its own io.Copy. Without this we
+	// abandoned the second direction mid-flight (truncating bidirectional
+	// protocols and losing one of the two byte counters).
 	done := make(chan struct{}, 2)
 	go func() {
 		n, _ := io.Copy(remote, local)
 		if tracker != nil {
 			tracker.AddBytesOut(n)
+		}
+		if cw, ok := remote.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
 		}
 		done <- struct{}{}
 	}()
@@ -87,7 +98,11 @@ func pipeOneConn(sshClient *ssh.Client, local net.Conn, remoteAddr string, track
 		if tracker != nil {
 			tracker.AddBytesIn(n)
 		}
+		if cw, ok := local.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		}
 		done <- struct{}{}
 	}()
+	<-done
 	<-done
 }
