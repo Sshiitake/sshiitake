@@ -40,9 +40,8 @@ func upCmd() *cobra.Command {
 			}
 
 			m, err := manager.New(cfg, sshCfgPath, manager.Options{
-				Selectors:           args,
-				HostKeyCallback:     hostKeyCB,
-				HostKeyVerification: true,
+				Selectors:       args,
+				HostKeyCallback: hostKeyCB,
 			})
 			if err != nil {
 				return err

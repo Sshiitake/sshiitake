@@ -81,11 +81,14 @@ func TestUp_endToEnd(t *testing.T) {
 
 	dir := t.TempDir()
 	cfgPath := dir + "/tunnels.toml"
+	// local_port = 0 asks the OS for an ephemeral port. The listen-file
+	// receives the actual bound address once Start succeeds, removing
+	// the 18443 collision risk that flaked CI on shared runners.
 	require.NoError(t, os.WriteFile(cfgPath, []byte(fmt.Sprintf(`
 [tunnels.echo]
 host = "%s"
 type = "local"
-local_port = 18443
+local_port = 0
 remote_host = "%s"
 remote_port = %s
 `, host, echoHost(echoAddr), echoPort(echoAddr))), 0o600))

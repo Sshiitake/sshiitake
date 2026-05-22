@@ -44,8 +44,8 @@ func validateTunnel(t Tunnel) error {
 	default:
 		return fmt.Errorf("unknown type %q (want local, remote, or dynamic)", t.Type)
 	}
-	if !validPort(t.LocalPort) {
-		return fmt.Errorf("local_port %d out of range (1-65535)", t.LocalPort)
+	if !validLocalPort(t.LocalPort) {
+		return fmt.Errorf("local_port %d out of range (0-65535; 0 = auto-pick)", t.LocalPort)
 	}
 	switch t.Type {
 	case TypeLocal:
@@ -66,6 +66,11 @@ func validateTunnel(t Tunnel) error {
 }
 
 func validPort(p int) bool { return p >= 1 && p <= 65535 }
+
+// validLocalPort accepts 0 in addition to the normal range. local_port=0
+// asks the OS to pick a free ephemeral port at listen time; LocalAddr()
+// surfaces the actual address.
+func validLocalPort(p int) bool { return p >= 0 && p <= 65535 }
 
 // isLoopback reports whether host is a loopback bind target. Accepts the
 // literal "localhost" alongside any IP that net.ParseIP recognises as a

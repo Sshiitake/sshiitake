@@ -32,7 +32,7 @@ func TestNew_singleTunnelLoaded(t *testing.T) {
 				LocalPort: 18443, RemoteHost: "127.0.0.1", RemotePort: 80},
 		},
 	}
-	m, err := New(cfg, "", Options{HostKeyVerification: false})
+	m, err := New(cfg, "", Options{})
 	require.NoError(t, err)
 	assert.Len(t, m.Tunnels(), 1)
 	assert.Equal(t, "api", m.Tunnels()[0].Name())
@@ -68,8 +68,7 @@ func TestRun_multipleTunnelsStartConcurrently(t *testing.T) {
 	sshCfgPath := writeTempSSHConfig(t, host, port)
 
 	m, err := New(cfg, sshCfgPath, Options{
-		HostKeyCallback:     ssh.FixedHostKey(hostKey),
-		HostKeyVerification: true,
+		HostKeyCallback: ssh.FixedHostKey(hostKey),
 	})
 	require.NoError(t, err)
 	require.Len(t, m.Tunnels(), 2)
@@ -131,7 +130,7 @@ func TestRun_emitsMetricsEvents(t *testing.T) {
 		},
 	}
 	m, err := New(cfg, writeTempSSHConfig(t, host, port), Options{
-		HostKeyCallback: ssh.FixedHostKey(hostKey), HostKeyVerification: true,
+		HostKeyCallback: ssh.FixedHostKey(hostKey),
 	})
 	require.NoError(t, err)
 
@@ -154,7 +153,9 @@ func TestRun_emitsMetricsEvents(t *testing.T) {
 	_ = c.Close()
 
 	// Expect at least one EventMetrics within a reasonable window.
-	deadline := time.After(3 * time.Second)
+	// 6s rather than 3s for race-detector tolerance on cold CI runners
+	// where the 1s metrics tick + the goroutine schedule can stack up.
+	deadline := time.After(6 * time.Second)
 	for {
 		select {
 		case e := <-ch:

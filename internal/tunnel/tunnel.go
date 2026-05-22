@@ -180,9 +180,15 @@ func (t *Tunnel) dial(ctx context.Context) (*ssh.Client, error) {
 		return nil, fmt.Errorf("tunnel %q: ProxyJump=%q is not yet supported (Phase 2)",
 			t.rt.Name, t.rt.ProxyJump)
 	}
-	auth, err := t.buildAuth()
+	auth, agentConn, err := t.buildAuth()
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
+	}
+	// The agent socket is only needed during the SSH handshake; once
+	// NewClientConn returns we never call back into it. Closing it here
+	// (deferred) prevents a leaked unix-socket conn per tunnel.
+	if agentConn != nil {
+		defer func() { _ = agentConn.Close() }()
 	}
 	cfg := &ssh.ClientConfig{
 		User:            t.rt.SSHUser,
@@ -206,13 +212,19 @@ func (t *Tunnel) dial(ctx context.Context) (*ssh.Client, error) {
 	return ssh.NewClient(clientConn, chans, reqs), nil
 }
 
-func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, error) {
+// buildAuth returns the SSH auth methods to attempt and, if an
+// ssh-agent socket was successfully opened, the underlying net.Conn so
+// the caller can Close it once the handshake completes.
+func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, net.Conn, error) {
 	var methods []ssh.AuthMethod
+	var agentConn net.Conn
 
 	// Try ssh-agent if SSH_AUTH_SOCK is set.
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		if agentMethod, err := agentAuth(sock); err == nil {
-			methods = append(methods, agentMethod)
+		if conn, err := net.Dial("unix", sock); err == nil {
+			ac := agent.NewClient(conn)
+			methods = append(methods, ssh.PublicKeysCallback(ac.Signers))
+			agentConn = conn
 		}
 	}
 
@@ -225,17 +237,7 @@ func (t *Tunnel) buildAuth() ([]ssh.AuthMethod, error) {
 
 	// Test servers use NoClientAuth; clients sending an empty Auth list
 	// are accepted in that case.
-	return methods, nil
-}
-
-// agentAuth returns an ssh.AuthMethod backed by the ssh-agent at sock.
-func agentAuth(sock string) (ssh.AuthMethod, error) {
-	conn, err := net.Dial("unix", sock)
-	if err != nil {
-		return nil, err
-	}
-	ac := agent.NewClient(conn)
-	return ssh.PublicKeysCallback(ac.Signers), nil
+	return methods, agentConn, nil
 }
 
 // keyAuth reads a private key from disk and returns it as an AuthMethod.

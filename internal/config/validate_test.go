@@ -91,6 +91,18 @@ func TestValidate_localHostExternalRejected(t *testing.T) {
 	require.Error(t, cfg.Validate())
 }
 
+// TestValidate_localPortZeroOK accepts local_port = 0 as "auto-pick"
+// so callers can ask the OS for an ephemeral port and read LocalAddr()
+// after Start. Without this, tests would have to reserve a port and
+// race the tunnel for binding it.
+func TestValidate_localPortZeroOK(t *testing.T) {
+	cfg := &Config{Tunnels: map[string]Tunnel{
+		"x": {Host: "h", Type: TypeLocal, LocalPort: 0,
+			RemoteHost: "r", RemotePort: 80},
+	}}
+	require.NoError(t, cfg.Validate())
+}
+
 func TestValidate_groupReferenceUnknown(t *testing.T) {
 	cfg := &Config{
 		Tunnels: map[string]Tunnel{

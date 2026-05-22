@@ -25,14 +25,10 @@ type Options struct {
 	// expands to its members.
 	Selectors []string
 
-	// HostKeyCallback is required for production use. Tests can leave
-	// it nil and set HostKeyVerification=false to skip dial-time host
-	// key checks (those run inside Tunnel.dial).
+	// HostKeyCallback is required for production use. Tests may supply
+	// ssh.InsecureIgnoreHostKey() when the test setup never reaches the
+	// handshake (e.g. dial-error tests). Tunnel.dial enforces non-nil.
 	HostKeyCallback ssh.HostKeyCallback
-
-	// HostKeyVerification, when false, lets the Manager construct
-	// tunnels without a host-key callback. ONLY for tests.
-	HostKeyVerification bool
 }
 
 // Manager owns a set of tunnels and exposes lifecycle controls + event
